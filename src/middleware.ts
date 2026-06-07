@@ -2,8 +2,8 @@ import { NextResponse } from "next/server";
 import { SESSION_COOKIE, parseSessionToken } from "@/lib/session";
 import type { NextRequest } from "next/server";
 
-const PUBLIC_PATHS = ["/", "/signup"];
-const AUTH_PATHS = ["/", "/signup"];
+const PUBLIC_PATHS = ["/", "/signup", "/login", "/settings"];
+const AUTH_ENTRY_PATHS = ["/", "/signup", "/login"];
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
@@ -16,7 +16,7 @@ export async function middleware(request: NextRequest) {
   }
 
   if (PUBLIC_PATHS.includes(pathname)) {
-    if (isAuthed && AUTH_PATHS.includes(pathname)) {
+    if (isAuthed && AUTH_ENTRY_PATHS.includes(pathname)) {
       return NextResponse.redirect(new URL("/profiles", request.url));
     }
     return NextResponse.next();
@@ -25,11 +25,12 @@ export async function middleware(request: NextRequest) {
   if (
     pathname.startsWith("/browse") ||
     pathname.startsWith("/watch") ||
-    pathname === "/settings" ||
     pathname === "/profiles"
   ) {
     if (!isAuthed) {
-      return NextResponse.redirect(new URL("/", request.url));
+      const login = new URL("/", request.url);
+      login.searchParams.set("next", pathname);
+      return NextResponse.redirect(login);
     }
   }
 
@@ -37,5 +38,5 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/", "/signup", "/profiles", "/browse/:path*", "/watch/:path*", "/settings"],
+  matcher: ["/", "/login", "/signup", "/profiles", "/browse/:path*", "/watch/:path*", "/settings"],
 };

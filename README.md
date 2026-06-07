@@ -59,7 +59,9 @@ Required in `.env`:
 ```env
 PLEX_URL=http://10.10.0.8:32800
 PLEX_TOKEN=your_plex_token_here
-LIBRARY_PATH=/media
+LIBRARY_PATH=/media/Video
+COOKIE_SECURE=false
+SESSION_SECRET=change-me-to-a-random-string
 DATA_PATH=/app/data
 NEXT_PUBLIC_APP_URL=http://10.10.0.8:3233
 REAL_DEBRID_TOKEN=your_token_if_using_debrid
@@ -104,7 +106,9 @@ Container logs show startup config (token is never printed):
 podman logs notflix
 # [notflix]   PORT=3000
 # [notflix]   PLEX_URL=http://10.10.0.8:32800
-# [notflix]   LIBRARY_PATH=/media
+# [notflix]   LIBRARY_PATH=/media/Video
+COOKIE_SECURE=false
+SESSION_SECRET=change-me-to-a-random-string
 # [notflix]   PLEX_TOKEN=[configured]
 ```
 

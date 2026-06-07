@@ -9,7 +9,7 @@ export function getPort(): number {
 export function getLibraryPath(): string {
   const fromEnv = process.env.LIBRARY_PATH?.trim();
   if (fromEnv) return fromEnv;
-  return process.env.NODE_ENV === "production" ? "/media" : "";
+  return process.env.NODE_ENV === "production" ? "/media/Video" : "";
 }
 
 export function getPlexUrl(): string {

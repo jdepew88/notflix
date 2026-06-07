@@ -5,10 +5,12 @@ import Link from "next/link";
 import { ArrowLeft, Check, X, RefreshCw } from "lucide-react";
 import { useAppStore } from "@/lib/store";
 import { syncSettingsToServer, fetchWithSettings } from "@/lib/client-settings";
+import { CONTAINER_VIDEO_PATH, HOST_VIDEO_PATH } from "@/lib/library-path";
 import { cn } from "@/lib/cn";
 
 export default function SettingsPage() {
   const settings = useAppStore((s) => s.settings);
+  const user = useAppStore((s) => s.user);
   const updateSettings = useAppStore((s) => s.updateSettings);
   const [form, setForm] = useState(settings);
   const [saved, setSaved] = useState(false);
@@ -112,10 +114,31 @@ export default function SettingsPage() {
       const res = await fetchWithSettings("/api/settings/diagnostics?action=library", form);
       const data = await res.json();
       setLibraryStatus(data.ok ? "ok" : "error");
-      setLibraryMessage(data.message ?? data.error ?? "");
+      const hint = data.hostHint ? ` (host: ${data.hostHint})` : "";
+      setLibraryMessage((data.message ?? data.error ?? "") + hint);
     } catch {
       setLibraryStatus("error");
       setLibraryMessage("Diagnostics request failed");
+    }
+  };
+
+  const testVideoFolder = async () => {
+    setLibraryStatus("checking");
+    setLibraryMessage("");
+    try {
+      const res = await fetchWithSettings(
+        `/api/settings/diagnostics?action=video&path=${encodeURIComponent(CONTAINER_VIDEO_PATH)}`,
+        form
+      );
+      const data = await res.json();
+      setLibraryStatus(data.ok ? "ok" : "error");
+      const hint = data.hostHint
+        ? ` Host path: ${data.hostHint}`
+        : "";
+      setLibraryMessage((data.message ?? data.error ?? "") + hint);
+    } catch {
+      setLibraryStatus("error");
+      setLibraryMessage("Video folder test failed");
     }
   };
 
@@ -157,9 +180,12 @@ export default function SettingsPage() {
 
   return (
     <div className="min-h-screen bg-netflix-black px-4 py-8 md:px-12 lg:px-16">
-      <Link href="/browse" className="mb-8 inline-flex items-center gap-2 text-sm hover:underline">
+      <Link
+        href={user ? "/browse" : "/"}
+        className="mb-8 inline-flex items-center gap-2 text-sm hover:underline"
+      >
         <ArrowLeft className="h-4 w-4" />
-        Back to Browse
+        {user ? "Back to Browse" : "Back to Sign In"}
       </Link>
 
       <h1 className="mb-2 text-3xl font-semibold">Settings</h1>
@@ -190,32 +216,45 @@ export default function SettingsPage() {
         <section className="rounded bg-netflix-dark p-6">
           <h2 className="mb-4 text-xl font-semibold">Diagnostics</h2>
           <p className="mb-4 text-sm text-netflix-light-gray">
-            Verify Plex is reachable and the mounted media folder is readable inside the container.
+            Test Plex connectivity and verify the video folder is readable inside the container.
+            Mount <code className="text-white">{HOST_VIDEO_PATH}</code> as{" "}
+            <code className="text-white">{CONTAINER_VIDEO_PATH}</code> in Docker (
+            <code className="text-white">-v /mnt/user/Media:/media:ro</code>).
           </p>
           <div className="flex flex-wrap gap-3">
             <button
               type="button"
               onClick={testPlexDiagnostics}
-              className="rounded border border-white/30 px-4 py-2 text-sm hover:bg-white/10"
+              disabled={!form.plexUrl || !form.plexToken}
+              className="rounded border border-white/30 px-4 py-2 text-sm hover:bg-white/10 disabled:opacity-40"
             >
               Test Plex server
+              {plexStatus === "checking" && "..."}
               {plexStatus === "ok" && <Check className="ml-1 inline h-4 w-4 text-green-400" />}
               {plexStatus === "error" && <X className="ml-1 inline h-4 w-4 text-red-400" />}
+            </button>
+            <button
+              type="button"
+              onClick={testVideoFolder}
+              className="rounded border border-white/30 px-4 py-2 text-sm hover:bg-white/10"
+            >
+              Test {CONTAINER_VIDEO_PATH}
+              {libraryStatus === "checking" && "..."}
+              {libraryStatus === "ok" && <Check className="ml-1 inline h-4 w-4 text-green-400" />}
+              {libraryStatus === "error" && <X className="ml-1 inline h-4 w-4 text-red-400" />}
             </button>
             <button
               type="button"
               onClick={testLibraryPath}
               className="rounded border border-white/30 px-4 py-2 text-sm hover:bg-white/10"
             >
-              Test media folder
-              {libraryStatus === "ok" && <Check className="ml-1 inline h-4 w-4 text-green-400" />}
-              {libraryStatus === "error" && <X className="ml-1 inline h-4 w-4 text-red-400" />}
+              Test library path
             </button>
             <button
               type="button"
               onClick={forceRefreshPlex}
-              disabled={refreshing}
-              className="flex items-center gap-2 rounded border border-white/30 px-4 py-2 text-sm hover:bg-white/10 disabled:opacity-50"
+              disabled={refreshing || !form.plexUrl || !form.plexToken}
+              className="flex items-center gap-2 rounded border border-white/30 px-4 py-2 text-sm hover:bg-white/10 disabled:opacity-40"
             >
               <RefreshCw className={cn("h-4 w-4", refreshing && "animate-spin")} />
               Force refresh Plex
@@ -319,15 +358,18 @@ export default function SettingsPage() {
         </section>
 
         <section className="rounded bg-netflix-dark p-6">
-          <h2 className="mb-4 text-xl font-semibold">NFS Library Path (alternative)</h2>
+          <h2 className="mb-4 text-xl font-semibold">Video library folder</h2>
           <p className="mb-4 text-sm text-netflix-light-gray">
-            Optional fallback if not using Plex API. Mount your unRAID share locally and enter the path.
+            Path inside the container. On unRAID, mount{" "}
+            <code className="text-white">{HOST_VIDEO_PATH}</code> via{" "}
+            <code className="text-white">-v /mnt/user/Media:/media:ro</code>, then use{" "}
+            <code className="text-white">{CONTAINER_VIDEO_PATH}</code> here.
           </p>
           <input
             type="text"
             value={form.libraryPath}
             onChange={(e) => setForm({ ...form, libraryPath: e.target.value })}
-            placeholder="Z:\media or /mnt/plex"
+            placeholder={CONTAINER_VIDEO_PATH}
             className="w-full rounded bg-[#333] px-4 py-3 focus:outline-none focus:ring-2 focus:ring-white/30"
           />
         </section>

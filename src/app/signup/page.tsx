@@ -2,10 +2,12 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useAppStore } from "@/lib/store";
+import { completeClientAuth } from "@/lib/auth-client";
 
 export default function SignUpPage() {
-  const router = useRouter();
+  const setUser = useAppStore((s) => s.setUser);
+  const hydrateUserState = useAppStore((s) => s.hydrateUserState);
   const [name, setName] = useState("");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
@@ -24,15 +26,14 @@ export default function SignUpPage() {
       const res = await fetch("/api/auth/signup", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify({ name, password }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Sign up failed");
-      router.push("/profiles");
-      router.refresh();
+      await completeClientAuth(data.user, setUser, hydrateUserState);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Sign up failed");
-    } finally {
       setLoading(false);
     }
   };
@@ -46,9 +47,12 @@ export default function SignUpPage() {
             "linear-gradient(rgba(0,0,0,0.5), rgba(0,0,0,0.5)), url('https://image.tmdb.org/t/p/original/9BBTo63ANSmhC4e6r62OJFuK2GL.jpg')",
         }}
       />
-      <header className="relative z-10 px-4 py-5 md:px-12">
+      <header className="relative z-10 flex items-center justify-between px-4 py-5 md:px-12">
         <Link href="/" className="text-netflix-red text-3xl font-bold md:text-4xl">
           NETFLIX
+        </Link>
+        <Link href="/settings" className="text-sm text-netflix-light-gray hover:text-white">
+          Settings
         </Link>
       </header>
 

@@ -47,7 +47,7 @@ export function Navbar() {
   }, []);
 
   const handleSignOut = async () => {
-    await fetch("/api/auth/logout", { method: "POST" });
+    await fetch("/api/auth/logout", { method: "POST", credentials: "include" });
     logoutLocal();
     window.location.href = "/";
   };

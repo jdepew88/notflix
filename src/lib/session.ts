@@ -11,6 +11,15 @@ function sessionSecret(): string {
   );
 }
 
+/** HTTP deployments (e.g. :3233 on unRAID) must not use Secure cookies. */
+export function cookieSecure(): boolean {
+  const explicit = process.env.COOKIE_SECURE?.trim().toLowerCase();
+  if (explicit === "true") return true;
+  if (explicit === "false") return false;
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL?.trim() ?? "";
+  return appUrl.startsWith("https://");
+}
+
 function toHex(buffer: ArrayBuffer): string {
   return Array.from(new Uint8Array(buffer))
     .map((b) => b.toString(16).padStart(2, "0"))
@@ -63,7 +72,7 @@ export function sessionCookieOptions(token: string) {
     value: token,
     httpOnly: true,
     sameSite: "lax" as const,
-    secure: process.env.NODE_ENV === "production",
+    secure: cookieSecure(),
     path: "/",
     maxAge: SESSION_MS / 1000,
   };

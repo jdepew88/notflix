@@ -2,10 +2,12 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useAppStore } from "@/lib/store";
+import { completeClientAuth } from "@/lib/auth-client";
 
 export default function LoginPage() {
-  const router = useRouter();
+  const setUser = useAppStore((s) => s.setUser);
+  const hydrateUserState = useAppStore((s) => s.hydrateUserState);
   const [name, setName] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
@@ -19,15 +21,14 @@ export default function LoginPage() {
       const res = await fetch("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify({ name, password }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Sign in failed");
-      router.push("/profiles");
-      router.refresh();
+      await completeClientAuth(data.user, setUser, hydrateUserState);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Sign in failed");
-    } finally {
       setLoading(false);
     }
   };
@@ -43,8 +44,11 @@ export default function LoginPage() {
       />
       <div className="netflix-gradient-top absolute inset-x-0 top-0 h-32" />
 
-      <header className="relative z-10 px-4 py-5 md:px-12">
+      <header className="relative z-10 flex items-center justify-between px-4 py-5 md:px-12">
         <span className="text-netflix-red text-3xl font-bold md:text-4xl">NETFLIX</span>
+        <Link href="/settings" className="text-sm text-netflix-light-gray hover:text-white">
+          Settings
+        </Link>
       </header>
 
       <main className="relative z-10 mx-auto mt-8 w-full max-w-md px-4 md:mt-16">

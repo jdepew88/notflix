@@ -4,6 +4,7 @@ import { fetchPlexLibrary, buildContentRowsFromPlex, filterByGenre, collectGenre
 import { scanLibrary, buildContentRows } from "@/lib/library";
 import { enrichLibraryWithTmdb } from "@/lib/tmdb";
 import { enrichWithTvdb } from "@/lib/tvdb";
+import { resolveLibraryPath } from "@/lib/library-path";
 
 export async function GET(request: NextRequest) {
   const settings = mergeSettings(request);
@@ -16,17 +17,20 @@ export async function GET(request: NextRequest) {
     if (settings.plexUrl && settings.plexToken) {
       items = await fetchPlexLibrary(settings.plexUrl, settings.plexToken);
       source = "plex";
-    } else if (settings.libraryPath) {
-      items = await scanLibrary(settings.libraryPath);
-      source = "nfs";
     } else {
-      return NextResponse.json({
-        items: [],
-        rows: [],
-        source: "none",
-        message:
-          "Configure Plex URL + token or library path in Settings, then click Save & Sync Library.",
-      });
+      const libraryPath = resolveLibraryPath(settings.libraryPath);
+      if (libraryPath) {
+        items = await scanLibrary(libraryPath);
+        source = "nfs";
+      } else {
+        return NextResponse.json({
+          items: [],
+          rows: [],
+          source: "none",
+          message:
+            "Configure Plex URL + token or library path in Settings, then click Save & Sync Library.",
+        });
+      }
     }
 
     if (settings.tvdbApiKey && items.length > 0) {

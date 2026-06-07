@@ -13,6 +13,7 @@ function AppHydrator() {
   const updateSettings = useAppStore((s) => s.updateSettings);
   const setUser = useAppStore((s) => s.setUser);
   const hydrateUserState = useAppStore((s) => s.hydrateUserState);
+  const user = useAppStore((s) => s.user);
   const activeProfileId = useAppStore((s) => s.activeProfileId);
 
   useEffect(() => {
@@ -49,12 +50,13 @@ function AppHydrator() {
   useEffect(() => {
     const path = window.location.pathname;
     if (
+      user &&
       (path.startsWith("/browse") || path.startsWith("/watch") || path === "/settings") &&
       !activeProfileId
     ) {
       router.replace("/profiles");
     }
-  }, [activeProfileId, router]);
+  }, [user, activeProfileId, router]);
 
   return null;
 }

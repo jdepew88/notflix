@@ -1,14 +1,39 @@
 import { NextRequest, NextResponse } from "next/server";
 import fs from "fs";
-import path from "path";
 import { mergeSettings } from "@/lib/settings";
 import { fetchPlexLibrary } from "@/lib/plex";
 import { scanLibrary } from "@/lib/library";
-import { getLibraryPath } from "@/lib/env";
+import {
+  CONTAINER_VIDEO_PATH,
+  HOST_VIDEO_PATH,
+  resolveLibraryPath,
+} from "@/lib/library-path";
+
+function testLibraryPath(libraryPath: string) {
+  if (!libraryPath) {
+    return { ok: false, error: "No library path configured" };
+  }
+  if (!fs.existsSync(libraryPath)) {
+    return {
+      ok: false,
+      error: `Path does not exist: ${libraryPath}`,
+      path: libraryPath,
+      hostHint: HOST_VIDEO_PATH,
+    };
+  }
+  const stat = fs.statSync(libraryPath);
+  if (!stat.isDirectory()) {
+    return { ok: false, error: "Path is not a directory", path: libraryPath };
+  }
+  fs.accessSync(libraryPath, fs.constants.R_OK);
+  return { ok: true, path: libraryPath, readable: true };
+}
 
 export async function GET(request: NextRequest) {
   const settings = mergeSettings(request);
   const action = request.nextUrl.searchParams.get("action") ?? "all";
+  const pathOverride = request.nextUrl.searchParams.get("path") ?? undefined;
+  const libraryPath = pathOverride || resolveLibraryPath(settings.libraryPath);
 
   if (action === "plex") {
     if (!settings.plexUrl || !settings.plexToken) {
@@ -29,35 +54,44 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  if (action === "nfs" || action === "library") {
-    const libraryPath = settings.libraryPath || getLibraryPath();
-    if (!libraryPath) {
-      return NextResponse.json({ ok: false, error: "LIBRARY_PATH not configured" });
+  if (action === "nfs" || action === "library" || action === "video") {
+    const targetPath =
+      action === "video" ? pathOverride || CONTAINER_VIDEO_PATH : libraryPath;
+
+    if (!targetPath) {
+      return NextResponse.json({
+        ok: false,
+        error: "LIBRARY_PATH not configured",
+        hostHint: HOST_VIDEO_PATH,
+        containerHint: CONTAINER_VIDEO_PATH,
+      });
     }
+
     try {
-      if (!fs.existsSync(libraryPath)) {
+      const access = testLibraryPath(targetPath);
+      if (!access.ok) {
         return NextResponse.json({
-          ok: false,
-          error: `Path does not exist: ${libraryPath}`,
+          ...access,
+          hostHint: HOST_VIDEO_PATH,
+          containerHint: CONTAINER_VIDEO_PATH,
         });
       }
-      const stat = fs.statSync(libraryPath);
-      if (!stat.isDirectory()) {
-        return NextResponse.json({ ok: false, error: "Path is not a directory" });
-      }
-      fs.accessSync(libraryPath, fs.constants.R_OK);
-      const items = await scanLibrary(libraryPath);
+
+      const items = await scanLibrary(targetPath);
       return NextResponse.json({
         ok: true,
-        message: `Media folder readable — ${items.length} video files found at ${libraryPath}`,
+        message: `Video folder readable — ${items.length} video files at ${targetPath}`,
         count: items.length,
-        path: libraryPath,
+        path: targetPath,
+        hostHint: HOST_VIDEO_PATH,
       });
     } catch (err) {
       return NextResponse.json({
         ok: false,
         error: err instanceof Error ? err.message : "Cannot read media folder",
-        path: libraryPath,
+        path: targetPath,
+        hostHint: HOST_VIDEO_PATH,
+        containerHint: CONTAINER_VIDEO_PATH,
       });
     }
   }
@@ -78,15 +112,14 @@ export async function GET(request: NextRequest) {
     results.plex = { ok: false, error: "Not configured" };
   }
 
-  const libraryPath = settings.libraryPath || getLibraryPath();
   if (libraryPath) {
     try {
-      if (fs.existsSync(libraryPath) && fs.statSync(libraryPath).isDirectory()) {
-        fs.accessSync(libraryPath, fs.constants.R_OK);
+      const access = testLibraryPath(libraryPath);
+      if (!access.ok) {
+        results.library = access;
+      } else {
         const items = await scanLibrary(libraryPath);
         results.library = { ok: true, count: items.length, path: libraryPath };
-      } else {
-        results.library = { ok: false, error: `Missing: ${libraryPath}` };
       }
     } catch (err) {
       results.library = {
@@ -97,6 +130,32 @@ export async function GET(request: NextRequest) {
     }
   } else {
     results.library = { ok: false, error: "Not configured" };
+  }
+
+  try {
+    const access = testLibraryPath(CONTAINER_VIDEO_PATH);
+    if (access.ok) {
+      const items = await scanLibrary(CONTAINER_VIDEO_PATH);
+      results.videoFolder = {
+        ok: true,
+        count: items.length,
+        path: CONTAINER_VIDEO_PATH,
+        hostHint: HOST_VIDEO_PATH,
+      };
+    } else {
+      results.videoFolder = {
+        ...access,
+        hostHint: HOST_VIDEO_PATH,
+        containerHint: CONTAINER_VIDEO_PATH,
+      };
+    }
+  } catch (err) {
+    results.videoFolder = {
+      ok: false,
+      error: err instanceof Error ? err.message : "Read failed",
+      path: CONTAINER_VIDEO_PATH,
+      hostHint: HOST_VIDEO_PATH,
+    };
   }
 
   return NextResponse.json(results);
