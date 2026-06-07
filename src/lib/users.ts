@@ -38,8 +38,15 @@ function readUsersFile(): UsersFile {
 
 function writeUsersFile(data: UsersFile): void {
   const file = usersFilePath();
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, JSON.stringify(data, null, 2), "utf8");
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify(data, null, 2), "utf8");
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "write failed";
+    throw new Error(
+      `Could not save account data to ${file}. Check DATA_PATH permissions (${message}).`
+    );
+  }
 }
 
 function userStatePath(userId: string): string {
@@ -74,8 +81,15 @@ export function readUserState(userId: string): UserState {
 
 export function writeUserState(userId: string, state: UserState): void {
   const file = userStatePath(userId);
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, JSON.stringify(state, null, 2), "utf8");
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify(state, null, 2), "utf8");
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "write failed";
+    throw new Error(
+      `Could not save profile data to ${file}. Check DATA_PATH permissions (${message}).`
+    );
+  }
 }
 
 export function createUser(name: string, password: string): UserAccount {

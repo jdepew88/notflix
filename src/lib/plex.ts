@@ -54,6 +54,11 @@ async function plexGet<T>(
     next: { revalidate: 300 },
   });
   if (!res.ok) {
+    if (res.status === 401) {
+      throw new Error(
+        "Plex API error: 401 Unauthorized — sign in with Plex in Settings to refresh your token."
+      );
+    }
     throw new Error(`Plex API error: ${res.status} ${res.statusText}`);
   }
   return res.json() as Promise<T>;

@@ -13,6 +13,7 @@ function AppHydrator() {
   const updateSettings = useAppStore((s) => s.updateSettings);
   const setUser = useAppStore((s) => s.setUser);
   const hydrateUserState = useAppStore((s) => s.hydrateUserState);
+  const logoutLocal = useAppStore((s) => s.logoutLocal);
   const user = useAppStore((s) => s.user);
   const activeProfileId = useAppStore((s) => s.activeProfileId);
 
@@ -35,6 +36,8 @@ function AppHydrator() {
           const data = await meRes.json();
           setUser(data.user);
           hydrateUserState(data.state);
+        } else if (!cancelled && meRes.status === 401) {
+          logoutLocal();
         }
       } catch {
         /* optional */
@@ -45,7 +48,7 @@ function AppHydrator() {
     return () => {
       cancelled = true;
     };
-  }, [updateSettings, setUser, hydrateUserState]);
+  }, [updateSettings, setUser, hydrateUserState, logoutLocal]);
 
   useEffect(() => {
     const path = window.location.pathname;

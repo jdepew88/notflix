@@ -32,8 +32,12 @@ export async function PUT(request: NextRequest) {
 
   const current = readUserState(userId);
   const next: UserState = {
-    profiles: body.profiles ?? current.profiles,
-    activeProfileId: body.activeProfileId ?? current.activeProfileId,
+    profiles:
+      Array.isArray(body.profiles) && body.profiles.length > 0
+        ? body.profiles
+        : current.profiles,
+    activeProfileId:
+      body.activeProfileId !== undefined ? body.activeProfileId : current.activeProfileId,
     myListByProfile: body.myListByProfile ?? current.myListByProfile,
     continueWatchingByProfile:
       body.continueWatchingByProfile ?? current.continueWatchingByProfile,

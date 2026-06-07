@@ -56,7 +56,14 @@ export default function ProfilesPage() {
         }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed to add profile");
+      if (!res.ok) {
+        throw new Error(
+          data.error ||
+            (res.status === 401
+              ? "Session expired — sign in again."
+              : "Failed to add profile")
+        );
+      }
       hydrateUserState(data.state);
       setAdding(false);
       setNewName("");

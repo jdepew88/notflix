@@ -8,17 +8,22 @@ export async function completeClientAuth(
     activeProfileId: string | null;
     myListByProfile: Record<string, string[]>;
     continueWatchingByProfile: Record<string, Record<string, number>>;
-  }) => void
+  }) => void,
+  redirectTo = "/profiles"
 ): Promise<void> {
   setUser(user);
-  try {
-    const meRes = await fetch("/api/auth/me", { credentials: "include" });
-    if (meRes.ok) {
-      const data = await meRes.json();
-      hydrateUserState(data.state);
-    }
-  } catch {
-    /* optional */
+
+  const meRes = await fetch("/api/auth/me", { credentials: "include" });
+  if (!meRes.ok) {
+    throw new Error(
+      "Account was created but the session cookie was not saved. If you use HTTP (not HTTPS), set COOKIE_SECURE=false in your environment."
+    );
   }
-  window.location.assign("/profiles");
+
+  const data = await meRes.json();
+  if (data.state) {
+    hydrateUserState(data.state);
+  }
+
+  window.location.assign(redirectTo.startsWith("/") ? redirectTo : "/profiles");
 }

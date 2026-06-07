@@ -26,7 +26,9 @@ export default function LoginPage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Sign in failed");
-      await completeClientAuth(data.user, setUser, hydrateUserState);
+      const next = new URLSearchParams(window.location.search).get("next");
+      const redirectTo = next && next.startsWith("/") ? next : "/profiles";
+      await completeClientAuth(data.user, setUser, hydrateUserState, redirectTo);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Sign in failed");
       setLoading(false);

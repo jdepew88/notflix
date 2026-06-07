@@ -1,11 +1,12 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { ArrowLeft, Check, X, RefreshCw } from "lucide-react";
 import { useAppStore } from "@/lib/store";
 import { syncSettingsToServer, fetchWithSettings } from "@/lib/client-settings";
 import { CONTAINER_VIDEO_PATH, HOST_VIDEO_PATH } from "@/lib/library-path";
+import { isPlexUnauthorizedMessage } from "@/lib/plex-auth-client";
 import { cn } from "@/lib/cn";
 
 export default function SettingsPage() {
@@ -24,6 +25,17 @@ export default function SettingsPage() {
   const [libraryMessage, setLibraryMessage] = useState("");
   const [refreshing, setRefreshing] = useState(false);
   const [refreshResult, setRefreshResult] = useState("");
+  const [plexSigningIn, setPlexSigningIn] = useState(false);
+  const [plexNeedsSignIn, setPlexNeedsSignIn] = useState(false);
+  const plexPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const plexPollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (plexPollRef.current) clearInterval(plexPollRef.current);
+      if (plexPollTimeoutRef.current) clearTimeout(plexPollTimeoutRef.current);
+    };
+  }, []);
 
   useEffect(() => {
     setForm(settings);
@@ -63,6 +75,76 @@ export default function SettingsPage() {
     }
   };
 
+  const stopPlexPoll = () => {
+    if (plexPollRef.current) {
+      clearInterval(plexPollRef.current);
+      plexPollRef.current = null;
+    }
+    if (plexPollTimeoutRef.current) {
+      clearTimeout(plexPollTimeoutRef.current);
+      plexPollTimeoutRef.current = null;
+    }
+    setPlexSigningIn(false);
+  };
+
+  const applyPlexAuth = async (auth: {
+    plexToken: string;
+    plexUrl?: string;
+    serverName?: string;
+  }) => {
+    const nextForm = {
+      ...form,
+      plexToken: auth.plexToken,
+      plexUrl: auth.plexUrl || form.plexUrl,
+    };
+    setForm(nextForm);
+    updateSettings(nextForm);
+    setPlexNeedsSignIn(false);
+    setPlexStatus("ok");
+    setPlexServer(auth.serverName ? `Signed in — ${auth.serverName}` : "Signed in to Plex");
+    await syncSettingsToServer(nextForm);
+  };
+
+  const signInWithPlex = async () => {
+    stopPlexPoll();
+    setPlexSigningIn(true);
+    setPlexServer("");
+    setPlexNeedsSignIn(false);
+    try {
+      const res = await fetch("/api/plex/auth/pin", { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Could not start Plex sign-in");
+
+      window.open(data.authUrl, "plex-auth", "width=520,height=720");
+
+      plexPollRef.current = setInterval(async () => {
+        try {
+          const pollRes = await fetch(`/api/plex/auth/pin?pinId=${encodeURIComponent(data.pinId)}`);
+          const pollData = await pollRes.json();
+          if (!pollRes.ok) throw new Error(pollData.error || "Plex sign-in failed");
+          if (pollData.status !== "authorized") return;
+
+          stopPlexPoll();
+          await applyPlexAuth(pollData);
+        } catch (err) {
+          stopPlexPoll();
+          setPlexStatus("error");
+          setPlexServer(err instanceof Error ? err.message : "Plex sign-in failed");
+        }
+      }, 2000);
+
+      plexPollTimeoutRef.current = setTimeout(() => {
+        stopPlexPoll();
+        setPlexStatus("error");
+        setPlexServer("Plex sign-in timed out. Try again.");
+      }, 120000);
+    } catch (err) {
+      stopPlexPoll();
+      setPlexStatus("error");
+      setPlexServer(err instanceof Error ? err.message : "Plex sign-in failed");
+    }
+  };
+
   const testDebrid = async () => {
     if (!form.realDebridToken) return;
     setDebridStatus("checking");
@@ -80,6 +162,7 @@ export default function SettingsPage() {
     if (!form.plexUrl || !form.plexToken) return;
     setPlexStatus("checking");
     setPlexServer("");
+    setPlexNeedsSignIn(false);
     try {
       const res = await fetchWithSettings("/api/settings/sync?test=plex", form);
       const data = await res.json();
@@ -89,6 +172,7 @@ export default function SettingsPage() {
       } else {
         setPlexStatus("error");
         setPlexServer(data.error ?? "Failed");
+        setPlexNeedsSignIn(isPlexUnauthorizedMessage(data.error));
       }
     } catch {
       setPlexStatus("error");
@@ -145,6 +229,7 @@ export default function SettingsPage() {
   const testPlexDiagnostics = async () => {
     setPlexStatus("checking");
     setPlexServer("");
+    setPlexNeedsSignIn(false);
     try {
       const res = await fetchWithSettings("/api/settings/diagnostics?action=plex", form);
       const data = await res.json();
@@ -154,6 +239,7 @@ export default function SettingsPage() {
       } else {
         setPlexStatus("error");
         setPlexServer(data.error ?? "Failed");
+        setPlexNeedsSignIn(isPlexUnauthorizedMessage(data.error));
       }
     } catch {
       setPlexStatus("error");
@@ -266,6 +352,21 @@ export default function SettingsPage() {
           {plexServer && plexStatus === "error" && (
             <p className="mt-3 text-sm text-red-400">{plexServer}</p>
           )}
+          {plexNeedsSignIn && (
+            <div className="mt-3 rounded border border-yellow-500/30 bg-yellow-900/20 px-4 py-3 text-sm">
+              <p className="text-yellow-100">
+                Plex rejected the token (401). Sign in with Plex to get a fresh token and server URL.
+              </p>
+              <button
+                type="button"
+                onClick={signInWithPlex}
+                disabled={plexSigningIn}
+                className="mt-3 rounded bg-netflix-red px-4 py-2 text-sm font-semibold hover:bg-netflix-red-hover disabled:opacity-60"
+              >
+                {plexSigningIn ? "Waiting for Plex sign-in..." : "Sign in with Plex"}
+              </button>
+            </div>
+          )}
           {libraryMessage && (
             <p
               className={cn(
@@ -284,16 +385,18 @@ export default function SettingsPage() {
         <section className="rounded bg-netflix-dark p-6">
           <h2 className="mb-4 text-xl font-semibold">Plex Server</h2>
           <p className="mb-4 text-sm text-netflix-light-gray">
-            Connect directly to your unRAID Plex server. Get your token from{" "}
-            <a
-              href="https://support.plex.tv/articles/204059436-finding-an-authentication-token-x-plex-token/"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-white underline"
-            >
-              Plex support docs
-            </a>
-            , or open Plex Web → any item → Get Info → View XML (token is in the URL).
+            Sign in with Plex to connect automatically, or paste your server URL and token manually.
+          </p>
+          <button
+            type="button"
+            onClick={signInWithPlex}
+            disabled={plexSigningIn}
+            className="mb-4 rounded bg-[#e5a00d] px-5 py-2.5 text-sm font-semibold text-black hover:bg-[#f5b020] disabled:opacity-60"
+          >
+            {plexSigningIn ? "Waiting for Plex sign-in..." : "Sign in with Plex"}
+          </button>
+          <p className="mb-4 text-xs text-netflix-gray">
+            Opens plex.tv in a popup. After you approve access, Notflix fills in your token and server URL.
           </p>
           <label className="mb-1 block text-sm text-netflix-light-gray">Plex server URL</label>
           <input
@@ -320,8 +423,20 @@ export default function SettingsPage() {
             {plexStatus === "checking" && "..."}
             {plexStatus === "ok" && <Check className="ml-1 inline h-4 w-4 text-green-400" />}
             {plexStatus === "error" && <X className="ml-1 inline h-4 w-4 text-red-400" />}
-            {plexServer && <span className="ml-2 text-green-400">{plexServer}</span>}
           </button>
+          {plexServer && plexStatus === "ok" && (
+            <p className="mt-2 text-sm text-green-400">{plexServer}</p>
+          )}
+          {plexServer && plexStatus === "error" && (
+            <p className="mt-2 text-sm text-red-400">{plexServer}</p>
+          )}
+          {plexNeedsSignIn && (
+            <div className="mt-3 rounded border border-yellow-500/30 bg-yellow-900/20 px-4 py-3 text-sm">
+              <p className="text-yellow-100">
+                Token unauthorized. Use Sign in with Plex above to refresh your credentials.
+              </p>
+            </div>
+          )}
         </section>
 
         <section className="rounded bg-netflix-dark p-6">
