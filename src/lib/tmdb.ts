@@ -89,6 +89,13 @@ export async function getMovieDetails(apiKey: string, id: number) {
   >(`/movie/${id}`, apiKey);
 }
 
+export async function getMovieExternalIds(
+  apiKey: string,
+  id: number
+): Promise<{ imdb_id: string | null }> {
+  return tmdbFetch<{ imdb_id: string | null }>(`/movie/${id}/external_ids`, apiKey);
+}
+
 export async function getMovieVideos(apiKey: string, id: number): Promise<string | null> {
   const data = await tmdbFetch<{
     results: Array<{ key: string; site: string; type: string }>;

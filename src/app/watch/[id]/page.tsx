@@ -30,6 +30,7 @@ export default function WatchPage() {
   const [plexReady, setPlexReady] = useState(false);
   const [forceTranscode, setForceTranscode] = useState(false);
   const [plexRatingKey, setPlexRatingKey] = useState<string | null>(null);
+  const [resolveStatus, setResolveStatus] = useState("");
   const updateProgress = useAppStore((s) => s.updateProgress);
   const progress = useAppStore((s) => s.continueWatching[id] ?? 0);
   const storeSettings = useAppStore((s) => s.settings);
@@ -140,6 +141,46 @@ export default function WatchPage() {
         return;
       }
 
+      async function playRemoteStream(item: MediaItem, rawUrl: string, proxiedUrl: string) {
+        setItem(item);
+        setSourceUrl(rawUrl);
+
+        if (useDirectPlay) {
+          const tracksRes = await fetch(
+            `/api/debrid/tracks?url=${encodeURIComponent(rawUrl)}`
+          );
+          const tracksData = await tracksRes.json();
+
+          if (tracksRes.ok && tracksData.needsTranscode) {
+            setAudioTracks(tracksData.audio ?? []);
+            setSubtitleTracks(tracksData.subtitles ?? []);
+            const audio = tracksData.defaultAudioIndex ?? tracksData.audio?.[0]?.index ?? 0;
+            setAudioIndex(audio);
+            setSubtitleIndex(tracksData.defaultSubtitleIndex ?? null);
+            await startTranscode(rawUrl, audio, null);
+            return;
+          }
+
+          setStreamUrl(proxiedUrl);
+          return;
+        }
+
+        const tracksRes = await fetch(
+          `/api/debrid/tracks?url=${encodeURIComponent(rawUrl)}`
+        );
+        const tracksData = await tracksRes.json();
+        if (tracksRes.ok) {
+          setAudioTracks(tracksData.audio ?? []);
+          setSubtitleTracks(tracksData.subtitles ?? []);
+          const audio = tracksData.defaultAudioIndex ?? tracksData.audio?.[0]?.index ?? 0;
+          setAudioIndex(audio);
+          setSubtitleIndex(tracksData.defaultSubtitleIndex ?? null);
+          await startTranscode(rawUrl, audio, null);
+        } else {
+          setStreamUrl(proxiedUrl);
+        }
+      }
+
       async function startPlexPlayback(ratingKey: string) {
         if (!settings.plexUrl || !settings.plexToken) {
           setError("Plex not configured. Go to Settings → enter URL + token → Save & Sync Library.");
@@ -154,6 +195,56 @@ export default function WatchPage() {
           throw new Error(playData.hint || playData.error || "Failed to start playback");
         }
         setStreamUrl(playData.streamUrl);
+      }
+
+      if (id.startsWith("tmdb-")) {
+        const tmdbId = parseInt(id.replace("tmdb-", ""), 10);
+        if (!Number.isFinite(tmdbId)) {
+          setError("Invalid title id");
+          return;
+        }
+        try {
+          setResolveStatus("Checking Plex library…");
+          const resolveRes = await fetchWithSettings(
+            `/api/play/resolve?tmdbId=${tmdbId}&type=movie`,
+            settings
+          );
+          const resolved = await resolveRes.json();
+
+          if (!resolveRes.ok) {
+            throw new Error(
+              resolved.message || resolved.error || "Not in Plex and no torrents found"
+            );
+          }
+
+          if (resolved.source === "plex" && resolved.item) {
+            setResolveStatus("Playing from Plex…");
+            setItem(resolved.item);
+            const rk =
+              resolved.item.plexRatingKey ??
+              resolved.watchId?.replace("plex-", "");
+            if (rk) {
+              await startPlexPlayback(rk);
+              return;
+            }
+          }
+
+          if (resolved.source === "torrentio" && resolved.streamUrl && resolved.item) {
+            setResolveStatus("Streaming from Real-Debrid…");
+            const proxyUrl = resolved.streamUrl as string;
+            const match = proxyUrl.match(/[?&]url=([^&]+)/);
+            const rawUrl = match ? decodeURIComponent(match[1]) : proxyUrl;
+            await playRemoteStream(resolved.item, rawUrl, proxyUrl);
+            return;
+          }
+
+          throw new Error("No playable stream found");
+        } catch (err) {
+          setError(err instanceof Error ? err.message : "Playback failed");
+        } finally {
+          setResolveStatus("");
+        }
+        return;
       }
 
       if (id.startsWith("plex-")) {
@@ -247,7 +338,7 @@ export default function WatchPage() {
     !!streamUrl &&
     (streamUrl.includes("/api/proxy/stream") || streamUrl.includes("/api/plex/stream"));
   const transcodeAvailable =
-    !!sourceUrl || !!plexRatingKey || id.startsWith("plex-");
+    !!sourceUrl || !!plexRatingKey || id.startsWith("plex-") || id.startsWith("tmdb-");
 
   const handleProgress = useCallback(
     (_seconds: number, percent: number) => {
@@ -287,7 +378,9 @@ export default function WatchPage() {
       <div className="flex h-screen flex-col items-center justify-center bg-black">
         <div className="h-12 w-12 animate-spin rounded-full border-4 border-white/30 border-t-white" />
         <p className="mt-4 text-sm text-netflix-light-gray">
-          {transcodeLoading ? "Preparing stream with audio..." : "Loading..."}
+          {transcodeLoading
+            ? "Preparing stream with audio..."
+            : resolveStatus || "Loading..."}
         </p>
       </div>
     );

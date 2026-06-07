@@ -32,15 +32,24 @@ export function getTvdbApiKey(): string {
   return process.env.TVDB_API_KEY?.trim() || "";
 }
 
+/** Full Torrentio install URL from configure page, without /manifest.json */
+export function getTorrentioUrl(): string {
+  return process.env.TORRENTIO_URL?.trim() || "";
+}
+
 export function logStartupConfig(): void {
   const port = getPort();
   const plexUrl = getPlexUrl() || "(not set)";
   const libraryPath = getLibraryPath() || "(not set)";
   const tokenStatus = getPlexToken() ? "[configured]" : "(not set)";
+  const debridStatus = getRealDebridToken() ? "[configured]" : "(not set)";
+  const torrentioStatus = getTorrentioUrl() ? "[configured]" : "(not set)";
 
   console.log("[notflix] Server configuration");
   console.log(`[notflix]   PORT=${port}`);
   console.log(`[notflix]   PLEX_URL=${plexUrl}`);
   console.log(`[notflix]   LIBRARY_PATH=${libraryPath}`);
   console.log(`[notflix]   PLEX_TOKEN=${tokenStatus}`);
+  console.log(`[notflix]   REAL_DEBRID_TOKEN=${debridStatus}`);
+  console.log(`[notflix]   TORRENTIO_URL=${torrentioStatus}`);
 }

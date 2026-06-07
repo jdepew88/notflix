@@ -193,7 +193,20 @@ export default function SettingsPage() {
         </section>
 
         <section className="rounded bg-netflix-dark p-6">
-          <h2 className="mb-4 text-xl font-semibold">Real-Debrid</h2>
+          <h2 className="mb-4 text-xl font-semibold">Real-Debrid + Torrentio</h2>
+          <p className="mb-4 text-sm text-netflix-light-gray">
+            When a title is not in Plex, Notflix searches torrent indexers via{" "}
+            <a
+              href="https://torrentio.strem.fun/configure"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-white underline"
+            >
+              Torrentio
+            </a>{" "}
+            and plays cached streams from your Real-Debrid account. Configure Torrentio on their site,
+            or just enter your Real-Debrid token here (uses default Torrentio settings).
+          </p>
           <input
             type="password"
             value={form.realDebridToken}
