@@ -2,12 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { createReadStream, statSync } from "fs";
 import { mergeSettings } from "@/lib/settings";
 import {
-  ensureHeroPreview,
   getHeroVideoFile,
   isHeroVideoGenerating,
   isHeroVideoReady,
+  isValidVideoFile,
 } from "@/lib/hero-cache";
 import { readLibraryCache } from "@/lib/library-cache";
+import { resolveHeroVideoWithSync } from "@/lib/hero-resolve";
 
 function streamVideoFile(filePath: string, request: NextRequest): NextResponse {
   const stat = statSync(filePath);
@@ -70,12 +71,10 @@ export async function GET(request: NextRequest) {
   }
 
   const file = getHeroVideoFile(id);
-  if (!file) {
+  if (!file || !isValidVideoFile(id)) {
     const settings = mergeSettings(request);
-    const cache = readLibraryCache();
-    const item = cache?.items.find((i) => i.id === id);
-    if (item) {
-      void ensureHeroPreview(item, settings);
+    if (!isHeroVideoGenerating(id)) {
+      void resolveHeroVideoWithSync(settings);
     }
     return NextResponse.json({ ready: false }, { status: 404 });
   }
@@ -102,19 +101,15 @@ export async function POST(request: NextRequest) {
 
   const settings = mergeSettings(request);
   const cache = readLibraryCache();
-  const item = cache?.items.find((i) => i.id === id);
-  if (!item) {
-    return NextResponse.json({ error: "Title not in library cache" }, { status: 404 });
+  if (!cache) {
+    return NextResponse.json({ error: "Library cache not found" }, { status: 404 });
   }
 
   if (!isHeroVideoGenerating(id)) {
-    void ensureHeroPreview(item, settings);
+    void resolveHeroVideoWithSync(settings);
   }
 
-  return NextResponse.json(
-    { ready: false, generating: true },
-    { status: 202 }
-  );
+  return NextResponse.json({ ready: false, generating: true }, { status: 202 });
 }
 
 export async function HEAD(request: NextRequest) {
@@ -122,7 +117,7 @@ export async function HEAD(request: NextRequest) {
   if (!id) return new NextResponse(null, { status: 400 });
 
   const file = getHeroVideoFile(id);
-  if (!file) return new NextResponse(null, { status: 404 });
+  if (!file || !isValidVideoFile(id)) return new NextResponse(null, { status: 404 });
 
   try {
     const stat = statSync(file);

@@ -11,6 +11,7 @@ import { useDetailModal } from "@/providers/DetailModalProvider";
 import { useAppStore, isInMyList } from "@/lib/store";
 import { posterUrl, backdropUrl } from "@/lib/tmdb";
 import { watchHrefForItem } from "@/lib/watch-url";
+import { WatchProviderLogos } from "@/components/browse/WatchProviderLogos";
 import { cn } from "@/lib/cn";
 
 function formatRuntime(minutes?: number): string {
@@ -139,6 +140,11 @@ export function TitleCardPortal() {
             <p className="line-clamp-1 text-xs text-netflix-light-gray">
               {item.genres.join(" · ")}
             </p>
+          )}
+          {(item.watchProviders || item.tmdbId) && (
+            <div className="mt-2">
+              <WatchProviderLogos item={item} logoClassName="h-6 w-6" />
+            </div>
           )}
         </div>
       </motion.div>

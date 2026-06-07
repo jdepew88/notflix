@@ -7,6 +7,8 @@ import {
   readLibraryCache,
 } from "@/lib/library-cache";
 import { buildLibraryCatalog } from "@/lib/library-sync";
+import { attachWatchProvidersToLibrary } from "@/lib/library-providers";
+import { enrichItemsWithWatchProviders } from "@/lib/tmdb";
 
 export async function GET(request: NextRequest) {
   const settings = mergeSettings(request);
@@ -53,20 +55,35 @@ export async function GET(request: NextRequest) {
       servedFromCache = false;
     }
 
-    const genres = cache.genres;
+    const country = request.nextUrl.searchParams.get("country") ?? "US";
 
     if (genreFilter) {
-      const items = filterByGenre(cache.items, genreFilter);
+      let items = filterByGenre(cache.items, genreFilter);
+      if (settings.tmdbApiKey) {
+        const enriched = await enrichItemsWithWatchProviders(
+          items.slice(0, 40),
+          settings.tmdbApiKey,
+          country
+        );
+        const byId = new Map(enriched.map((item) => [item.id, item]));
+        items = items.map((item) => byId.get(item.id) ?? item);
+      }
       return NextResponse.json({
         items,
         rows: [],
         source: cache.source,
         count: items.length,
         genre: genreFilter,
-        genres,
+        genres: cache.genres,
         cachedAt: cache.cachedAt,
       });
     }
+
+    if (settings.tmdbApiKey) {
+      cache = await attachWatchProvidersToLibrary(cache, settings.tmdbApiKey, { country });
+    }
+
+    const genres = cache.genres;
 
     return NextResponse.json({
       items: cache.items,
@@ -75,6 +92,8 @@ export async function GET(request: NextRequest) {
       count: cache.items.length,
       genres,
       featuredHeroId: cache.featuredHeroId,
+      heroPrimaryId: cache.heroPrimaryId ?? cache.featuredHeroId,
+      heroVideoError: cache.heroVideoError ?? null,
       cached: servedFromCache,
       cachedAt: cache.cachedAt,
     });

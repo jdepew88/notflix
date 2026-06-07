@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { MediaImage } from "@/components/ui/MediaImage";
-import { Play, Info, Volume2, VolumeX } from "lucide-react";
+import { Play, Info, Volume2, VolumeX, AlertCircle } from "lucide-react";
 import { motion } from "framer-motion";
 import { backdropUrl } from "@/lib/tmdb";
 import { watchHrefForItem } from "@/lib/watch-url";
@@ -12,16 +12,32 @@ import type { MediaItem } from "@/lib/types";
 
 interface HeroBannerProps {
   item: MediaItem;
+  videoError?: string | null;
+  onHeroItemChange?: (item: MediaItem, error: string | null) => void;
 }
 
 const HERO_POLL_MS = 2000;
-const HERO_POLL_ATTEMPTS = 30;
+const HERO_POLL_ATTEMPTS = 45;
 
-export function HeroBanner({ item }: HeroBannerProps) {
+interface HeroStatusResponse {
+  featuredId?: string;
+  primaryId?: string;
+  videoReady?: boolean;
+  generating?: boolean;
+  exhausted?: boolean;
+  error?: string | null;
+  item?: MediaItem | null;
+  videoUrl?: string | null;
+}
+
+export function HeroBanner({ item: initialItem, videoError, onHeroItemChange }: HeroBannerProps) {
   const { openDetail } = useDetailModal();
-  const backdrop = backdropUrl(item.backdropPath);
-  const watchHref = watchHrefForItem(item);
+  const [heroItem, setHeroItem] = useState(initialItem);
+  const [heroError, setHeroError] = useState<string | null>(videoError ?? null);
+  const backdrop = backdropUrl(heroItem.backdropPath);
+  const watchHref = watchHrefForItem(heroItem);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const fallbackInFlight = useRef(false);
   const [trailerKey, setTrailerKey] = useState<string | null>(null);
   const [localVideoUrl, setLocalVideoUrl] = useState<string | null>(null);
   const [videoMode, setVideoMode] = useState<"local" | "youtube" | null>(null);
@@ -29,11 +45,60 @@ export function HeroBanner({ item }: HeroBannerProps) {
   const [showVideo, setShowVideo] = useState(false);
 
   const tmdbId =
-    item.tmdbId ??
-    (item.id.startsWith("tmdb-") ? parseInt(item.id.replace("tmdb-", ""), 10) : null);
+    heroItem.tmdbId ??
+    (heroItem.id.startsWith("tmdb-") ? parseInt(heroItem.id.replace("tmdb-", ""), 10) : null);
 
   const isLibraryHero =
-    item.source === "library" || item.id.startsWith("plex-") || Boolean(item.plexPartKey);
+    heroItem.source === "library" ||
+    heroItem.id.startsWith("plex-") ||
+    Boolean(heroItem.plexPartKey);
+
+  useEffect(() => {
+    setHeroItem(initialItem);
+    setHeroError(videoError ?? null);
+  }, [initialItem, videoError]);
+
+  const applyStatus = useCallback(
+    (data: HeroStatusResponse) => {
+      if (data.item) {
+        setHeroItem(data.item);
+        onHeroItemChange?.(data.item, data.error ?? null);
+      }
+      if (data.error) {
+        setHeroError(data.error);
+      } else if (data.videoReady) {
+        setHeroError(null);
+      }
+      if (data.videoReady && data.videoUrl) {
+        setLocalVideoUrl(data.videoUrl);
+        setVideoMode("local");
+        setShowVideo(true);
+        return true;
+      }
+      return false;
+    },
+    [onHeroItemChange]
+  );
+
+  const requestFallback = useCallback(
+    async (failedId: string, reason: string) => {
+      if (fallbackInFlight.current) return null;
+      fallbackInFlight.current = true;
+      try {
+        const res = await fetch("/api/hero/fallback", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: failedId, reason }),
+        });
+        const data = (await res.json()) as HeroStatusResponse;
+        applyStatus(data);
+        return data;
+      } finally {
+        fallbackInFlight.current = false;
+      }
+    },
+    [applyStatus]
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -50,29 +115,36 @@ export function HeroBanner({ item }: HeroBannerProps) {
       }
     }
 
-    async function pollLocalPreview(url: string): Promise<boolean> {
+    async function pollHeroStatus(): Promise<boolean> {
       for (let attempt = 0; attempt < HERO_POLL_ATTEMPTS; attempt++) {
         if (cancelled) return false;
-        const head = await fetch(url, { method: "HEAD" }).catch(() => null);
-        if (head?.ok) {
-          setLocalVideoUrl(url);
-          setVideoMode("local");
-          setShowVideo(true);
-          return true;
+        const resolve = attempt === 0 ? "?resolve=1" : "";
+        const res = await fetch(`/api/hero/status${resolve}`).catch(() => null);
+        if (cancelled || !res?.ok) {
+          await new Promise((r) => setTimeout(r, HERO_POLL_MS));
+          continue;
         }
-        if (attempt === 0) {
-          void fetch(url, { method: "POST" }).catch(() => null);
+        const data = (await res.json()) as HeroStatusResponse;
+        if (applyStatus(data)) return true;
+        if (data.exhausted) {
+          setHeroError(data.error ?? "Marquee video unavailable");
+          setLocalVideoUrl(null);
+          setShowVideo(false);
+          return false;
         }
-        await new Promise((resolve) => setTimeout(resolve, HERO_POLL_MS));
+        await new Promise((r) => setTimeout(r, HERO_POLL_MS));
       }
       return false;
     }
 
     async function loadHeroVideo() {
       if (isLibraryHero) {
-        const url = `/api/hero/video?id=${encodeURIComponent(item.id)}`;
-        const ready = await pollLocalPreview(url);
+        const ready = await pollHeroStatus();
         if (ready || cancelled) return;
+        if (!heroError) {
+          await loadTrailer();
+        }
+        return;
       }
       await loadTrailer();
     }
@@ -87,13 +159,31 @@ export function HeroBanner({ item }: HeroBannerProps) {
     return () => {
       cancelled = true;
     };
-  }, [item.id, tmdbId, isLibraryHero]);
+  }, [heroItem.id, tmdbId, isLibraryHero, applyStatus]);
 
   useEffect(() => {
     if (videoRef.current) {
       videoRef.current.muted = muted;
     }
   }, [muted, localVideoUrl]);
+
+  const handleVideoError = () => {
+    const failedId = heroItem.id;
+    setLocalVideoUrl(null);
+    setShowVideo(false);
+    void requestFallback(failedId, "Browser could not play hero preview").then((data) => {
+      if (data?.videoUrl && data.videoReady) {
+        setLocalVideoUrl(data.videoUrl);
+        setVideoMode("local");
+        setShowVideo(true);
+      } else if (data?.exhausted) {
+        setHeroError(data.error ?? "Marquee video unavailable");
+      } else if (trailerKey) {
+        setVideoMode("youtube");
+        setShowVideo(true);
+      }
+    });
+  };
 
   const hasVideo = showVideo && (videoMode === "local" ? Boolean(localVideoUrl) : Boolean(trailerKey));
 
@@ -109,11 +199,7 @@ export function HeroBanner({ item }: HeroBannerProps) {
             muted
             playsInline
             className="pointer-events-none absolute left-1/2 top-1/2 h-[56.25vw] min-h-full min-w-full w-[177.78vh] -translate-x-1/2 -translate-y-1/2 object-cover"
-            onError={() => {
-              setLocalVideoUrl(null);
-              setShowVideo(Boolean(trailerKey));
-              if (trailerKey) setVideoMode("youtube");
-            }}
+            onError={handleVideoError}
           />
         </div>
       ) : hasVideo && videoMode === "youtube" && trailerKey ? (
@@ -122,13 +208,13 @@ export function HeroBanner({ item }: HeroBannerProps) {
             src={`https://www.youtube.com/embed/${trailerKey}?autoplay=1&mute=${muted ? 1 : 0}&controls=0&loop=1&playlist=${trailerKey}&modestbranding=1&rel=0&showinfo=0`}
             className="pointer-events-none absolute left-1/2 top-1/2 h-[56.25vw] min-h-full min-w-full w-[177.78vh] -translate-x-1/2 -translate-y-1/2"
             allow="autoplay; encrypted-media"
-            title={item.title}
+            title={heroItem.title}
           />
         </div>
       ) : backdrop ? (
         <MediaImage
           src={backdrop}
-          alt={item.title}
+          alt={heroItem.title}
           fill
           priority
           className="object-cover object-top"
@@ -140,6 +226,13 @@ export function HeroBanner({ item }: HeroBannerProps) {
 
       <div className="netflix-gradient-hero absolute inset-0" />
       <div className="netflix-gradient-bottom absolute inset-x-0 bottom-0 h-32" />
+
+      {heroError && (
+        <div className="absolute left-4 right-4 top-4 z-20 flex items-start gap-2 rounded-md border border-yellow-500/40 bg-black/70 px-3 py-2 text-sm text-yellow-100 backdrop-blur md:left-12 md:max-w-xl">
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-yellow-400" />
+          <span>{heroError}</span>
+        </div>
+      )}
 
       {hasVideo && (
         <button
@@ -158,11 +251,11 @@ export function HeroBanner({ item }: HeroBannerProps) {
         className="absolute bottom-[20%] left-4 z-10 max-w-xl md:left-12 md:max-w-2xl lg:left-16 lg:max-w-3xl"
       >
         <h1 className="mb-3 text-3xl font-bold drop-shadow-lg md:text-5xl lg:text-6xl">
-          {item.title}
+          {heroItem.title}
         </h1>
-        {item.overview && (
+        {heroItem.overview && (
           <p className="mb-4 line-clamp-3 max-w-lg text-sm md:text-base lg:text-lg">
-            {item.overview}
+            {heroItem.overview}
           </p>
         )}
         <div className="flex flex-wrap gap-3">
@@ -175,7 +268,7 @@ export function HeroBanner({ item }: HeroBannerProps) {
           </Link>
           <button
             type="button"
-            onClick={() => openDetail(item)}
+            onClick={() => openDetail(heroItem)}
             className="flex items-center gap-2 rounded bg-white/30 px-6 py-2 text-sm font-semibold backdrop-blur transition hover:bg-white/20 md:px-8 md:py-2.5 md:text-base"
           >
             <Info className="h-5 w-5" />

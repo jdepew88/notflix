@@ -7,21 +7,50 @@ import type { ServerSettings } from "./server-settings";
 import { getDataPath } from "./data-path";
 import { getFfmpegPath, isFfmpegAvailable } from "./ffmpeg";
 
-interface HeroManifest {
+export interface HeroManifest {
+  primaryFeaturedId: string;
   featuredId: string;
-  fileName: string;
-  sourceKey: string;
-  createdAt: string;
+  candidateIds: string[];
+  failedIds: string[];
+  attemptIndex: number;
+  lastError?: string;
+  videoReady: boolean;
+  exhausted: boolean;
+  fileName?: string;
+  sourceKey?: string;
+  createdAt?: string;
 }
 
-const activeJobs = new Map<string, Promise<boolean>>();
+export interface HeroStatus {
+  primaryFeaturedId: string;
+  featuredId: string;
+  candidateIds: string[];
+  failedIds: string[];
+  attemptIndex: number;
+  videoReady: boolean;
+  exhausted: boolean;
+  lastError?: string;
+}
 
-function heroCacheDir(): string {
+const MIN_VIDEO_BYTES = 16_000;
+const activeJobs = new Map<string, Promise<boolean>>();
+let resolveInFlight: Promise<HeroStatus> | null = null;
+
+export function heroCacheDir(): string {
   return path.join(getDataPath(), "hero-cache");
+}
+
+export function heroTmpDir(): string {
+  return path.join(getDataPath(), "tmp", "hero");
 }
 
 function manifestPath(): string {
   return path.join(heroCacheDir(), "manifest.json");
+}
+
+export function ensureHeroDirs(): void {
+  fs.mkdirSync(heroTmpDir(), { recursive: true });
+  fs.mkdirSync(heroCacheDir(), { recursive: true });
 }
 
 function safeFileName(itemId: string): string {
@@ -30,6 +59,10 @@ function safeFileName(itemId: string): string {
 
 function videoPathForItem(itemId: string): string {
   return path.join(heroCacheDir(), `${safeFileName(itemId)}.mp4`);
+}
+
+function tmpVideoPathForItem(itemId: string): string {
+  return path.join(heroTmpDir(), `${safeFileName(itemId)}.work.mp4`);
 }
 
 function readManifest(): HeroManifest | null {
@@ -41,8 +74,55 @@ function readManifest(): HeroManifest | null {
 }
 
 function writeManifest(manifest: HeroManifest): void {
-  fs.mkdirSync(heroCacheDir(), { recursive: true });
+  ensureHeroDirs();
   fs.writeFileSync(manifestPath(), JSON.stringify(manifest, null, 2), "utf8");
+}
+
+function cleanTmpDir(): void {
+  const dir = heroTmpDir();
+  if (!fs.existsSync(dir)) return;
+  for (const entry of fs.readdirSync(dir)) {
+    try {
+      fs.unlinkSync(path.join(dir, entry));
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+export function getHeroManifest(): HeroManifest | null {
+  return readManifest();
+}
+
+export function getHeroStatus(): HeroStatus | null {
+  const manifest = readManifest();
+  if (!manifest) return null;
+  return {
+    primaryFeaturedId: manifest.primaryFeaturedId,
+    featuredId: manifest.featuredId,
+    candidateIds: manifest.candidateIds,
+    failedIds: manifest.failedIds,
+    attemptIndex: manifest.attemptIndex,
+    videoReady: manifest.videoReady && isValidVideoFile(manifest.featuredId),
+    exhausted: manifest.exhausted,
+    lastError: manifest.lastError,
+  };
+}
+
+export function initHeroManifest(candidates: MediaItem[]): HeroManifest | null {
+  if (candidates.length === 0) return null;
+  ensureHeroDirs();
+  const manifest: HeroManifest = {
+    primaryFeaturedId: candidates[0].id,
+    featuredId: candidates[0].id,
+    candidateIds: candidates.map((c) => c.id),
+    failedIds: [],
+    attemptIndex: 0,
+    videoReady: false,
+    exhausted: false,
+  };
+  writeManifest(manifest);
+  return manifest;
 }
 
 export function clearStaleHeroVideos(keepItemId: string): void {
@@ -78,12 +158,15 @@ function resolvePreviewInput(item: MediaItem, settings: ServerSettings): string 
   return null;
 }
 
-function isHeroPreviewCurrent(item: MediaItem): boolean {
-  const file = getHeroVideoFile(item.id);
+export function isValidVideoFile(itemId: string): boolean {
+  const file = getHeroVideoFile(itemId);
   if (!file) return false;
-  const manifest = readManifest();
-  if (!manifest || manifest.featuredId !== item.id) return false;
-  return manifest.sourceKey === sourceFingerprint(item);
+  try {
+    const stat = fs.statSync(file);
+    return stat.size >= MIN_VIDEO_BYTES;
+  } catch {
+    return false;
+  }
 }
 
 function removeHeroVideoFile(itemId: string): void {
@@ -95,6 +178,14 @@ function removeHeroVideoFile(itemId: string): void {
       /* ignore */
     }
   }
+  const tmp = tmpVideoPathForItem(itemId);
+  if (fs.existsSync(tmp)) {
+    try {
+      fs.unlinkSync(tmp);
+    } catch {
+      /* ignore */
+    }
+  }
 }
 
 async function generateHeroPreview(
@@ -102,13 +193,17 @@ async function generateHeroPreview(
   settings: ServerSettings
 ): Promise<boolean> {
   const input = resolvePreviewInput(item, settings);
-  if (!input) return false;
+  if (!input) throw new Error("No stream source for hero preview");
 
   const available = await isFfmpegAvailable();
-  if (!available) return false;
+  if (!available) throw new Error("ffmpeg not available");
 
+  ensureHeroDirs();
+  cleanTmpDir();
+
+  const tmpOut = tmpVideoPathForItem(item.id);
   const outPath = videoPathForItem(item.id);
-  fs.mkdirSync(heroCacheDir(), { recursive: true });
+  removeHeroVideoFile(item.id);
 
   const isRemote = /^https?:\/\//i.test(input);
   const args = [
@@ -140,7 +235,7 @@ async function generateHeroPreview(
     "-movflags",
     "+faststart",
     "-y",
-    outPath,
+    tmpOut,
   ];
 
   await new Promise<void>((resolve, reject) => {
@@ -149,70 +244,185 @@ async function generateHeroPreview(
     proc.stderr.on("data", (d) => (stderr += d.toString()));
     proc.on("error", reject);
     proc.on("close", (code) => {
-      if (code === 0 && fs.existsSync(outPath)) resolve();
+      if (code === 0 && fs.existsSync(tmpOut)) resolve();
       else reject(new Error(stderr.slice(-400) || `ffmpeg exited ${code}`));
     });
   });
 
-  writeManifest({
-    featuredId: item.id,
-    fileName: path.basename(outPath),
-    sourceKey: sourceFingerprint(item),
-    createdAt: new Date().toISOString(),
-  });
+  if (!fs.existsSync(tmpOut)) {
+    throw new Error("Hero preview file was not created");
+  }
+
+  const stat = fs.statSync(tmpOut);
+  if (stat.size < MIN_VIDEO_BYTES) {
+    fs.unlinkSync(tmpOut);
+    throw new Error("Hero preview file is too small or corrupt");
+  }
+
+  fs.renameSync(tmpOut, outPath);
 
   return true;
 }
 
-export function scheduleHeroPreview(
+async function tryGenerateForItem(
   item: MediaItem,
+  settings: ServerSettings
+): Promise<{ ok: boolean; error?: string }> {
+  if (activeJobs.has(item.id)) {
+    const ok = await activeJobs.get(item.id)!;
+    return ok
+      ? { ok: true }
+      : { ok: false, error: "Hero preview generation failed" };
+  }
+
+  const job = generateHeroPreview(item, settings)
+    .then(() => isValidVideoFile(item.id))
+    .catch((err) => {
+      removeHeroVideoFile(item.id);
+      console.warn("[hero-cache] Preview generation failed:", err);
+      return false;
+    })
+    .finally(() => {
+      activeJobs.delete(item.id);
+    });
+
+  activeJobs.set(item.id, job);
+  const ok = await job;
+  return ok
+    ? { ok: true }
+    : { ok: false, error: "Could not generate hero preview video" };
+}
+
+function findItem(items: MediaItem[], id: string): MediaItem | null {
+  return items.find((i) => i.id === id) ?? null;
+}
+
+export async function resolveHeroVideoCandidates(
+  allItems: MediaItem[],
   settings: ServerSettings,
-  previousFeaturedId?: string | null
+  options: { startIndex?: number; markFailedId?: string; reason?: string } = {}
+): Promise<HeroStatus> {
+  if (resolveInFlight) return resolveInFlight;
+
+  resolveInFlight = (async () => {
+    ensureHeroDirs();
+
+    const playableCandidates = allItems.filter(
+      (i) => i.type === "movie" && (i.plexPartKey || i.filePath)
+    );
+
+    let manifest = readManifest();
+    if (!manifest || manifest.candidateIds.length === 0) {
+      manifest = initHeroManifest(
+        playableCandidates.slice(0, 3).length
+          ? playableCandidates.slice(0, 3)
+          : allItems.filter((i) => i.type === "movie").slice(0, 3)
+      );
+    }
+    if (!manifest) {
+      throw new Error("No hero candidates");
+    }
+
+    if (options.markFailedId && !manifest.failedIds.includes(options.markFailedId)) {
+      manifest.failedIds.push(options.markFailedId);
+      removeHeroVideoFile(options.markFailedId);
+    }
+
+    const primaryId = manifest.primaryFeaturedId;
+    const candidateItems = manifest.candidateIds
+      .map((id) => findItem(allItems, id))
+      .filter((item): item is MediaItem => item !== null);
+
+    const maxAttempts = Math.min(3, candidateItems.length);
+    let startIndex = options.startIndex ?? manifest.attemptIndex;
+
+    if (options.markFailedId) {
+      const failedIndex = manifest.candidateIds.indexOf(options.markFailedId);
+      if (failedIndex >= 0) startIndex = failedIndex + 1;
+    }
+
+    let lastError = options.reason ?? manifest.lastError;
+
+    for (let attempt = startIndex; attempt < maxAttempts; attempt++) {
+      const item = candidateItems[attempt];
+      if (!item || manifest.failedIds.includes(item.id)) continue;
+
+      manifest.attemptIndex = attempt;
+      manifest.featuredId = item.id;
+      manifest.videoReady = false;
+      manifest.exhausted = false;
+      manifest.lastError = undefined;
+      writeManifest(manifest);
+
+      if (isValidVideoFile(item.id)) {
+        manifest.videoReady = true;
+        manifest.fileName = path.basename(videoPathForItem(item.id)!);
+        manifest.sourceKey = sourceFingerprint(item);
+        manifest.createdAt = new Date().toISOString();
+        writeManifest(manifest);
+        clearStaleHeroVideos(item.id);
+        return getHeroStatus()!;
+      }
+
+      const result = await tryGenerateForItem(item, settings);
+      if (result.ok && isValidVideoFile(item.id)) {
+        manifest.videoReady = true;
+        manifest.exhausted = false;
+        manifest.lastError = undefined;
+        manifest.fileName = path.basename(videoPathForItem(item.id)!);
+        manifest.sourceKey = sourceFingerprint(item);
+        manifest.createdAt = new Date().toISOString();
+        writeManifest(manifest);
+        clearStaleHeroVideos(item.id);
+        return getHeroStatus()!;
+      }
+
+      lastError = result.error ?? "Hero preview generation failed";
+      if (!manifest.failedIds.includes(item.id)) {
+        manifest.failedIds.push(item.id);
+      }
+      removeHeroVideoFile(item.id);
+      manifest.lastError = lastError;
+      writeManifest(manifest);
+    }
+
+    manifest.featuredId = primaryId;
+    manifest.attemptIndex = maxAttempts;
+    manifest.videoReady = false;
+    manifest.exhausted = true;
+    manifest.lastError =
+      lastError ??
+      "Marquee video unavailable after 3 attempts. Showing backdrop for the featured title.";
+    writeManifest(manifest);
+    clearStaleHeroVideos("");
+
+    return getHeroStatus()!;
+  })().finally(() => {
+    resolveInFlight = null;
+  });
+
+  return resolveInFlight;
+}
+
+export function scheduleHeroPreview(
+  candidates: MediaItem[],
+  allItems: MediaItem[],
+  settings: ServerSettings
 ): void {
-  if (previousFeaturedId && previousFeaturedId !== item.id) {
-    clearStaleHeroVideos(item.id);
-  }
-
-  if (isHeroPreviewCurrent(item)) return;
-
-  if (getHeroVideoFile(item.id)) {
-    removeHeroVideoFile(item.id);
-  }
-
-  if (activeJobs.has(item.id)) return;
-
-  activeJobs.set(
-    item.id,
-    generateHeroPreview(item, settings)
-      .catch((err) => {
-        console.warn("[hero-cache] Preview generation failed:", err);
-        return false;
-      })
-      .finally(() => {
-        activeJobs.delete(item.id);
-      })
-  );
+  if (candidates.length === 0) return;
+  initHeroManifest(candidates);
+  void resolveHeroVideoCandidates(allItems, settings).catch((err) => {
+    console.warn("[hero-cache] Hero resolve failed:", err);
+  });
 }
 
 export async function ensureHeroPreview(
   item: MediaItem,
-  settings: ServerSettings
+  settings: ServerSettings,
+  allItems: MediaItem[]
 ): Promise<boolean> {
-  if (isHeroPreviewCurrent(item)) return true;
-
-  if (getHeroVideoFile(item.id)) {
-    removeHeroVideoFile(item.id);
-  }
-
-  if (activeJobs.has(item.id)) {
-    return activeJobs.get(item.id)!;
-  }
-
-  const job = generateHeroPreview(item, settings).finally(() => {
-    activeJobs.delete(item.id);
-  });
-  activeJobs.set(item.id, job);
-  return job;
+  const status = await resolveHeroVideoCandidates(allItems, settings);
+  return status.videoReady && status.featuredId === item.id;
 }
 
 export async function readHeroVideoBuffer(itemId: string): Promise<Buffer | null> {
@@ -222,9 +432,9 @@ export async function readHeroVideoBuffer(itemId: string): Promise<Buffer | null
 }
 
 export function isHeroVideoReady(itemId: string): boolean {
-  return Boolean(getHeroVideoFile(itemId));
+  return isValidVideoFile(itemId);
 }
 
 export function isHeroVideoGenerating(itemId: string): boolean {
-  return activeJobs.has(itemId);
+  return activeJobs.has(itemId) || resolveInFlight !== null;
 }

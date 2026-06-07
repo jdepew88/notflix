@@ -1,5 +1,20 @@
 export type MediaSource = "library" | "debrid" | "tmdb";
 
+/** TMDB watch-provider API media type (`movie` or `tv`). */
+export type TmdbMediaType = "movie" | "tv";
+
+export interface WatchProvider {
+  id: number;
+  name: string;
+  logoPath?: string;
+}
+
+export interface WatchProvidersByType {
+  flatrate: WatchProvider[];
+  rent: WatchProvider[];
+  buy: WatchProvider[];
+}
+
 export interface MediaItem {
   id: string;
   title: string;
@@ -12,6 +27,9 @@ export interface MediaItem {
   genres?: string[];
   genreIds?: number[];
   tmdbId?: number;
+  /** TMDB media type for watch-provider lookups (`movie` or `tv`). */
+  mediaType?: TmdbMediaType;
+  watchProviders?: WatchProvidersByType;
   tvdbId?: number;
   plexRatingKey?: string;
   plexPartKey?: string;

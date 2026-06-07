@@ -110,6 +110,12 @@ function metadataToItem(
     releaseDate: meta.year ? String(meta.year) : undefined,
     runtime: meta.duration ? Math.round(meta.duration / 60000) : undefined,
     type,
+    mediaType:
+      tmdbId && (type === "movie" || type === "series")
+        ? type === "series"
+          ? "tv"
+          : "movie"
+        : undefined,
     source: "library",
     filePath,
     plexPartKey: partKey,

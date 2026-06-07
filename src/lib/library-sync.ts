@@ -12,11 +12,12 @@ import type { ServerSettings } from "./server-settings";
 import {
   hashPlexToken,
   pickFeaturedHero,
+  pickHeroCandidates,
   readLibraryCache,
   writeLibraryCache,
   type LibraryCacheData,
 } from "./library-cache";
-import { scheduleHeroPreview } from "./hero-cache";
+import { initializeAndResolveHeroVideo } from "./hero-resolve";
 
 interface BuildOptions {
   forceRefresh?: boolean;
@@ -70,6 +71,8 @@ async function buildLibraryCatalogInner(
   const rows =
     source === "plex" ? buildContentRowsFromPlex(items) : buildContentRows(items);
 
+  const heroCandidates = pickHeroCandidates(items, previous?.featuredHeroId);
+
   const cache: LibraryCacheData = {
     version: 1,
     cachedAt: new Date().toISOString(),
@@ -81,12 +84,14 @@ async function buildLibraryCatalogInner(
     rows,
     genres: collectGenres(items),
     featuredHeroId: featured?.id ?? null,
+    heroPrimaryId: heroCandidates[0]?.id ?? featured?.id ?? null,
+    heroVideoError: null,
   };
 
   writeLibraryCache(cache);
 
-  if (featured) {
-    scheduleHeroPreview(featured, settings, previous?.featuredHeroId ?? null);
+  if (heroCandidates.length > 0) {
+    void initializeAndResolveHeroVideo(items, settings, previous?.featuredHeroId);
   }
 
   return cache;

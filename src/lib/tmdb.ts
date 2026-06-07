@@ -1,4 +1,4 @@
-import type { MediaItem } from "./types";
+import type { MediaItem, TmdbMediaType, WatchProvider, WatchProvidersByType } from "./types";
 
 const TMDB_BASE = "https://api.themoviedb.org/3";
 const TMDB_IMAGE = "https://image.tmdb.org/t/p";
@@ -11,6 +11,113 @@ export function posterUrl(path?: string, size: "w342" | "w500" | "w780" | "origi
 
 export function backdropUrl(path?: string): string | undefined {
   return posterUrl(path, "original");
+}
+
+export function providerLogoUrl(path?: string, size: "w45" | "w92" = "w45"): string | undefined {
+  if (!path) return undefined;
+  return `${TMDB_IMAGE}/${size}${path}`;
+}
+
+export function resolveTmdbMediaType(item: MediaItem): TmdbMediaType | null {
+  if (item.mediaType) return item.mediaType;
+  if (item.type === "movie") return "movie";
+  if (item.type === "series") return "tv";
+  return null;
+}
+
+interface TmdbProvider {
+  provider_id: number;
+  provider_name: string;
+  logo_path: string | null;
+}
+
+interface TmdbWatchProvidersResponse {
+  results: Record<
+    string,
+    {
+      flatrate?: TmdbProvider[];
+      rent?: TmdbProvider[];
+      buy?: TmdbProvider[];
+    }
+  >;
+}
+
+function mapWatchProviders(list?: TmdbProvider[]): WatchProvider[] {
+  if (!list?.length) return [];
+  return list.map((p) => ({
+    id: p.provider_id,
+    name: p.provider_name,
+    logoPath: p.logo_path ?? undefined,
+  }));
+}
+
+export async function getWatchProviders(
+  tmdbId: number,
+  mediaType: TmdbMediaType,
+  apiKey: string,
+  country = "US"
+): Promise<WatchProvidersByType> {
+  const path =
+    mediaType === "movie"
+      ? `/movie/${tmdbId}/watch/providers`
+      : `/tv/${tmdbId}/watch/providers`;
+  const data = await tmdbFetch<TmdbWatchProvidersResponse>(path, apiKey);
+  const region = data.results[country.toUpperCase()] ?? data.results[country];
+  return {
+    flatrate: mapWatchProviders(region?.flatrate),
+    rent: mapWatchProviders(region?.rent),
+    buy: mapWatchProviders(region?.buy),
+  };
+}
+
+function watchProviderCacheKey(tmdbId: number, mediaType: TmdbMediaType): string {
+  return `${mediaType}:${tmdbId}`;
+}
+
+export async function enrichItemsWithWatchProviders(
+  items: MediaItem[],
+  apiKey: string,
+  country = "US"
+): Promise<MediaItem[]> {
+  const targets = new Map<string, { tmdbId: number; mediaType: TmdbMediaType }>();
+
+  for (const item of items) {
+    const mediaType = resolveTmdbMediaType(item);
+    if (item.tmdbId && mediaType) {
+      targets.set(watchProviderCacheKey(item.tmdbId, mediaType), {
+        tmdbId: item.tmdbId,
+        mediaType,
+      });
+    }
+  }
+
+  if (targets.size === 0) return items;
+
+  const providerCache = new Map<string, WatchProvidersByType>();
+  const entries = [...targets.entries()];
+
+  const batchSize = 8;
+  for (let i = 0; i < entries.length; i += batchSize) {
+    const batch = entries.slice(i, i + batchSize);
+    await Promise.all(
+      batch.map(async ([key, { tmdbId, mediaType }]) => {
+        try {
+          const providers = await getWatchProviders(tmdbId, mediaType, apiKey, country);
+          providerCache.set(key, providers);
+        } catch {
+          providerCache.set(key, { flatrate: [], rent: [], buy: [] });
+        }
+      })
+    );
+  }
+
+  return items.map((item) => {
+    const mediaType = resolveTmdbMediaType(item);
+    if (!item.tmdbId || !mediaType) return item;
+    const providers = providerCache.get(watchProviderCacheKey(item.tmdbId, mediaType));
+    if (!providers) return { ...item, mediaType };
+    return { ...item, mediaType, watchProviders: providers };
+  });
 }
 
 async function tmdbFetch<T>(path: string, apiKey: string): Promise<T> {
@@ -39,6 +146,7 @@ function toMediaItem(movie: TmdbMovie): MediaItem {
   return {
     id: `tmdb-${movie.id}`,
     tmdbId: movie.id,
+    mediaType: "movie",
     title: movie.title,
     overview: movie.overview,
     posterPath: movie.poster_path ?? undefined,

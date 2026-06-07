@@ -6,6 +6,7 @@ import { MediaImage } from "@/components/ui/MediaImage";
 import { Play, Plus, Info } from "lucide-react";
 import { posterUrl } from "@/lib/tmdb";
 import { canPlayItem, watchHref } from "@/lib/playback";
+import { WatchProviderLogos } from "@/components/browse/WatchProviderLogos";
 import type { MediaItem } from "@/lib/types";
 import { cn } from "@/lib/cn";
 
@@ -58,6 +59,16 @@ export function TitleCard({ item, className, priority }: TitleCardProps) {
               className="h-full bg-netflix-red"
               style={{ width: `${Math.min(item.progress, 100)}%` }}
             />
+          </div>
+        )}
+        {(item.watchProviders || item.tmdbId) && (
+          <div
+            className={cn(
+              "absolute left-0 right-0 bg-gradient-to-t from-black/85 via-black/40 to-transparent px-2 pb-2 pt-8",
+              item.progress !== undefined && item.progress > 0 ? "bottom-1" : "bottom-0"
+            )}
+          >
+            <WatchProviderLogos item={item} />
           </div>
         )}
       </div>

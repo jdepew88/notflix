@@ -10,9 +10,18 @@ import {
   getSimilarMovies,
   getGenres,
   getMoviesByGenre,
+  enrichItemsWithWatchProviders,
 } from "@/lib/tmdb";
 import { getTmdbApiKey } from "@/lib/env";
 import type { MediaItem } from "@/lib/types";
+
+async function withWatchProviders(
+  items: MediaItem[],
+  apiKey: string,
+  country: string
+): Promise<MediaItem[]> {
+  return enrichItemsWithWatchProviders(items, apiKey, country);
+}
 
 export async function GET(request: NextRequest) {
   const apiKey = getTmdbApiKey();
@@ -25,6 +34,7 @@ export async function GET(request: NextRequest) {
   const id = request.nextUrl.searchParams.get("id");
   const genreId = request.nextUrl.searchParams.get("genreId");
   const page = parseInt(request.nextUrl.searchParams.get("page") ?? "1", 10);
+  const country = request.nextUrl.searchParams.get("country") ?? "US";
 
   try {
     if (type === "details" && id) {
@@ -32,6 +42,7 @@ export async function GET(request: NextRequest) {
       const item: MediaItem = {
         id: `tmdb-${movie.id}`,
         tmdbId: movie.id,
+        mediaType: "movie",
         title: movie.title,
         overview: movie.overview,
         posterPath: movie.poster_path ?? undefined,
@@ -44,7 +55,8 @@ export async function GET(request: NextRequest) {
         type: "movie",
         source: "tmdb",
       };
-      return NextResponse.json({ item });
+      const [enriched] = await withWatchProviders([item], apiKey, country);
+      return NextResponse.json({ item: enriched });
     }
 
     if (type === "videos" && id) {
@@ -54,7 +66,9 @@ export async function GET(request: NextRequest) {
 
     if (type === "similar" && id) {
       const items = await getSimilarMovies(apiKey, parseInt(id, 10));
-      return NextResponse.json({ items });
+      return NextResponse.json({
+        items: await withWatchProviders(items, apiKey, country),
+      });
     }
 
     if (type === "genres") {
@@ -64,7 +78,10 @@ export async function GET(request: NextRequest) {
 
     if (type === "genre" && genreId) {
       const result = await getMoviesByGenre(apiKey, parseInt(genreId, 10), page);
-      return NextResponse.json(result);
+      return NextResponse.json({
+        items: await withWatchProviders(result.items, apiKey, country),
+        totalPages: result.totalPages,
+      });
     }
 
     let items;
@@ -85,7 +102,9 @@ export async function GET(request: NextRequest) {
       default:
         items = await getTrending(apiKey);
     }
-    return NextResponse.json({ items });
+    return NextResponse.json({
+      items: await withWatchProviders(items, apiKey, country),
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : "TMDB error";
     return NextResponse.json({ error: message }, { status: 500 });

@@ -1,14 +1,22 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   ensurePlexCookies,
   fetchWithSettings,
   getEffectiveSettings,
 } from "@/lib/client-settings";
 import { getContinueWatchingItems, useAppStore } from "@/lib/store";
+import {
+  filterRowItems,
+  itemMatchesStreamingService,
+  STREAMING_FILTER_EXEMPT_ROW_IDS,
+  getStreamingServiceLabel,
+  type StreamingServiceFilterId,
+} from "@/lib/streaming-services";
 import { HeroBanner } from "@/components/browse/HeroBanner";
 import { ContentRow } from "@/components/browse/ContentRow";
+import { StreamingServiceFilterBar } from "@/components/browse/StreamingServiceFilterBar";
 import type { MediaItem } from "@/lib/types";
 
 interface ContentRowData {
@@ -40,14 +48,32 @@ function isLibraryConfigured(settings: ReturnType<typeof getEffectiveSettings>):
   );
 }
 
+function applyStreamingFilterToRows(
+  rows: ContentRowData[],
+  serviceId: StreamingServiceFilterId
+): ContentRowData[] {
+  if (serviceId === "all") return rows;
+
+  return rows
+    .map((row) => {
+      if (STREAMING_FILTER_EXEMPT_ROW_IDS.has(row.id)) {
+        return row;
+      }
+      return { ...row, items: filterRowItems(row.items, serviceId) };
+    })
+    .filter((row) => row.items.length > 0);
+}
+
 export function BrowseContent() {
   const storeSettings = useAppStore((s) => s.settings);
   const activeProfileId = useAppStore((s) => s.activeProfileId);
-  const [rows, setRows] = useState<ContentRowData[]>([]);
+  const [allRows, setAllRows] = useState<ContentRowData[]>([]);
   const [hero, setHero] = useState<MediaItem | null>(null);
+  const [heroVideoError, setHeroVideoError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [libraryStatus, setLibraryStatus] = useState<string>("");
   const [loadFailed, setLoadFailed] = useState(false);
+  const [streamingFilter, setStreamingFilter] = useState<StreamingServiceFilterId>("all");
 
   useEffect(() => {
     async function load() {
@@ -82,6 +108,7 @@ export function BrowseContent() {
           const libData = await libraryRes.json();
           libraryItems = libData.items ?? [];
           featuredHeroId = libData.featuredHeroId ?? null;
+          setHeroVideoError(libData.heroVideoError ?? null);
           hasPlexLibrary = libData.source === "plex" && libraryItems.length > 0;
           if (libData.message) setLibraryStatus(libData.message);
           else if (libData.count) {
@@ -124,8 +151,9 @@ export function BrowseContent() {
           });
         }
 
-        setRows(newRows);
+        setAllRows(newRows);
         setHero(pickHero(libraryItems, featuredHeroId, newRows[0]));
+        setStreamingFilter("all");
       } finally {
         setLoading(false);
       }
@@ -133,8 +161,21 @@ export function BrowseContent() {
     load();
   }, [storeSettings, activeProfileId]);
 
+  const filteredRows = useMemo(
+    () => applyStreamingFilterToRows(allRows, streamingFilter),
+    [allRows, streamingFilter]
+  );
+
+  const displayHero = useMemo(() => {
+    if (streamingFilter === "all") return hero;
+    if (!hero) return null;
+    return itemMatchesStreamingService(hero, streamingFilter) ? hero : null;
+  }, [hero, streamingFilter]);
+
   const settings = getEffectiveSettings(storeSettings);
   const configured = isLibraryConfigured(settings);
+  const filterActive = streamingFilter !== "all";
+  const filterEmpty = filterActive && filteredRows.length === 0 && allRows.length > 0;
 
   if (loading) {
     return (
@@ -146,12 +187,48 @@ export function BrowseContent() {
 
   return (
     <div className="animate-fade-in">
-      {hero && <HeroBanner item={hero} />}
-      <div className={hero ? "-mt-16 relative z-10" : "pt-4"}>
-        {rows.map((row) => (
-          <ContentRow key={row.id} title={row.title} items={row.items} />
-        ))}
-        {rows.length === 0 && (
+      {displayHero && (
+        <HeroBanner
+          item={displayHero}
+          videoError={heroVideoError}
+          onHeroItemChange={(item, error) => {
+            setHero(item);
+            setHeroVideoError(error);
+          }}
+        />
+      )}
+      <div className={displayHero ? "-mt-16 relative z-10" : "pt-4"}>
+        {allRows.length > 0 && (
+          <StreamingServiceFilterBar
+            active={streamingFilter}
+            onChange={setStreamingFilter}
+          />
+        )}
+
+        {filterEmpty ? (
+          <div className="flex flex-col items-center justify-center px-4 py-16 text-center md:px-12">
+            <p className="text-lg font-medium text-white">
+              No titles on {getStreamingServiceLabel(streamingFilter)}
+            </p>
+            <p className="mt-2 max-w-md text-sm text-netflix-light-gray">
+              Try another service or choose All. Titles need TMDB streaming data — add a TMDB API
+              key in Settings if provider logos are missing.
+            </p>
+            <button
+              type="button"
+              onClick={() => setStreamingFilter("all")}
+              className="mt-6 rounded bg-white px-6 py-2 text-sm font-semibold text-black hover:bg-white/80"
+            >
+              Show All
+            </button>
+          </div>
+        ) : (
+          filteredRows.map((row) => (
+            <ContentRow key={row.id} title={row.title} items={row.items} />
+          ))
+        )}
+
+        {allRows.length === 0 && (
           <div className="flex flex-col items-center justify-center px-4 py-24 text-center">
             {loadFailed && configured ? (
               <>
@@ -193,7 +270,7 @@ export function BrowseContent() {
             )}
           </div>
         )}
-        {libraryStatus && rows.length > 0 && (
+        {libraryStatus && allRows.length > 0 && !filterEmpty && (
           <p className="px-4 pb-4 text-center text-xs text-netflix-gray md:px-12">{libraryStatus}</p>
         )}
       </div>
