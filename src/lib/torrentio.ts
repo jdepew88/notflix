@@ -76,7 +76,17 @@ export async function fetchTorrentioStreams(
 
 const QUALITY_ORDER = ["4k", "2160", "1080", "720", "480"];
 
-function streamScore(stream: TorrentioStream): number {
+export interface TorrentioStreamOption {
+  index: number;
+  label: string;
+  detail: string;
+  quality?: string;
+  cached: boolean;
+  score: number;
+  recommended: boolean;
+}
+
+export function streamScore(stream: TorrentioStream): number {
   const label = `${stream.name ?? ""} ${stream.title ?? ""}`.toLowerCase();
   if (label.includes("download") || label.includes("⬇")) return -100;
   if (stream.behaviorHints?.notWebReady) return -50;
@@ -93,6 +103,52 @@ function streamScore(stream: TorrentioStream): number {
     score += 5;
   }
   return score;
+}
+
+function parseStreamQuality(label: string): string | undefined {
+  const lower = label.toLowerCase();
+  for (const q of ["4k", "2160p", "1080p", "720p", "480p"]) {
+    if (lower.includes(q)) return q.toUpperCase().replace("2160P", "4K");
+  }
+  return undefined;
+}
+
+function formatStreamOption(stream: TorrentioStream, index: number, recommended: boolean): TorrentioStreamOption {
+  const rawTitle = (stream.title ?? stream.name ?? "Stream").trim();
+  const lines = rawTitle.split("\n").map((l) => l.trim()).filter(Boolean);
+  const label = lines[0] || "Stream";
+  const detail = lines.slice(1).join(" · ") || rawTitle;
+  const combined = `${stream.name ?? ""} ${stream.title ?? ""}`.toLowerCase();
+  const cached =
+    combined.includes("rd") ||
+    combined.includes("real-debrid") ||
+    combined.includes("debrid") ||
+    combined.includes("⚡");
+
+  return {
+    index,
+    label,
+    detail,
+    quality: parseStreamQuality(combined),
+    cached,
+    score: streamScore(stream),
+    recommended,
+  };
+}
+
+export function listPlayableTorrentioStreams(streams: TorrentioStream[]): {
+  playable: TorrentioStream[];
+  options: TorrentioStreamOption[];
+} {
+  const playable = streams
+    .filter((s) => s.url?.startsWith("http"))
+    .sort((a, b) => streamScore(b) - streamScore(a));
+
+  const options = playable.map((stream, index) =>
+    formatStreamOption(stream, index, index === 0)
+  );
+
+  return { playable, options };
 }
 
 export function pickBestTorrentioStream(streams: TorrentioStream[]): TorrentioStream | null {

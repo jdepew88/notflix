@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { X } from "lucide-react";
 import { VideoPlayer } from "@/components/player/VideoPlayer";
+import { StreamPicker } from "@/components/player/StreamPicker";
 import { useAppStore, getMediaProgress } from "@/lib/store";
 import { posterUrl } from "@/lib/tmdb";
 import {
@@ -13,10 +14,26 @@ import {
 } from "@/lib/client-settings";
 import type { MediaItem } from "@/lib/types";
 import type { StreamTrack } from "@/types/media-tracks";
+import type { TorrentioStreamOption } from "@/lib/torrentio";
+
+function buildPlayQuery(opts: {
+  tmdbId: number;
+  type: "movie" | "series";
+  season?: number;
+  episode?: number;
+}): string {
+  const params = new URLSearchParams();
+  params.set("tmdbId", String(opts.tmdbId));
+  params.set("type", opts.type);
+  if (opts.season != null) params.set("season", String(opts.season));
+  if (opts.episode != null) params.set("episode", String(opts.episode));
+  return params.toString();
+}
 
 export default function WatchPage() {
   const params = useParams();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const id = decodeURIComponent(params.id as string);
   const [item, setItem] = useState<MediaItem | null>(null);
   const [streamUrl, setStreamUrl] = useState<string | null>(null);
@@ -33,6 +50,10 @@ export default function WatchPage() {
   const [forceTranscode, setForceTranscode] = useState(false);
   const [plexRatingKey, setPlexRatingKey] = useState<string | null>(null);
   const [resolveStatus, setResolveStatus] = useState("");
+  const [torrentStreams, setTorrentStreams] = useState<TorrentioStreamOption[] | null>(null);
+  const [playQuery, setPlayQuery] = useState<string | null>(null);
+  const [openingStreamIndex, setOpeningStreamIndex] = useState<number | null>(null);
+  const [streamQuality, setStreamQuality] = useState<string | null>(null);
   const updateProgress = useAppStore((s) => s.updateProgress);
   const progress = getMediaProgress(id);
   const storeSettings = useAppStore((s) => s.settings);
@@ -138,6 +159,51 @@ export default function WatchPage() {
     [startTranscode, proxiedStreamUrl]
   );
 
+  const playRemoteStream = useCallback(
+    async (mediaItem: MediaItem, rawUrl: string, proxiedUrl: string) => {
+      const settings = getEffectiveSettings(storeSettings);
+      const useDirectPlay = Boolean(settings.directPlay) && !forceTranscode;
+      setItem(mediaItem);
+      await applyTrackedPlayback({
+        url: rawUrl,
+        proxiedUrl,
+        useDirectPlay,
+      });
+    },
+    [storeSettings, forceTranscode, applyTrackedPlayback]
+  );
+
+  const handleStreamSelect = useCallback(
+    async (streamIndex: number) => {
+      if (!playQuery) return;
+      const settings = getEffectiveSettings(storeSettings);
+      setOpeningStreamIndex(streamIndex);
+      setError("");
+      try {
+        const res = await fetchWithSettings(
+          `/api/play/open?${playQuery}&streamIndex=${streamIndex}`,
+          settings
+        );
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Failed to open stream");
+
+        const selected = torrentStreams?.find((s) => s.index === streamIndex);
+        setStreamQuality(selected?.quality ?? null);
+        setTorrentStreams(null);
+        setPlayQuery(null);
+        const proxyUrl = data.streamUrl as string;
+        const match = proxyUrl.match(/[?&]url=([^&]+)/);
+        const rawUrl = match ? decodeURIComponent(match[1]) : proxyUrl;
+        await playRemoteStream(data.item ?? item!, rawUrl, proxyUrl);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to open stream");
+      } finally {
+        setOpeningStreamIndex(null);
+      }
+    },
+    [playQuery, storeSettings, playRemoteStream, item, torrentStreams]
+  );
+
   // Sync Plex credentials to httpOnly cookies before playback (required for HLS segment requests)
   useEffect(() => {
     let cancelled = false;
@@ -158,6 +224,12 @@ export default function WatchPage() {
     if (!plexReady) return;
 
     async function load() {
+      setTorrentStreams(null);
+      setPlayQuery(null);
+      setOpeningStreamIndex(null);
+      setStreamQuality(null);
+      setError("");
+
       const settings = getEffectiveSettings(storeSettings);
       const useDirectPlay = Boolean(settings.directPlay) && !forceTranscode;
       const plexMode = useDirectPlay ? "direct" : "transcode";
@@ -198,15 +270,6 @@ export default function WatchPage() {
           setError(err instanceof Error ? err.message : "Failed to resolve stream");
         }
         return;
-      }
-
-      async function playRemoteStream(item: MediaItem, rawUrl: string, proxiedUrl: string) {
-        setItem(item);
-        await applyTrackedPlayback({
-          url: rawUrl,
-          proxiedUrl,
-          useDirectPlay,
-        });
       }
 
       async function startPlexPlayback(ratingKey: string) {
@@ -253,38 +316,44 @@ export default function WatchPage() {
           setError("Invalid title id");
           return;
         }
+        const type = (searchParams.get("type") ?? "movie") as "movie" | "series";
+        const season = searchParams.get("season")
+          ? parseInt(searchParams.get("season")!, 10)
+          : undefined;
+        const episode = searchParams.get("episode")
+          ? parseInt(searchParams.get("episode")!, 10)
+          : undefined;
+
         try {
           setResolveStatus("Checking Plex library…");
-          const resolveRes = await fetchWithSettings(
-            `/api/play/resolve?tmdbId=${tmdbId}&type=movie`,
-            settings
-          );
-          const resolved = await resolveRes.json();
+          const query = buildPlayQuery({ tmdbId, type, season, episode });
+          const streamsRes = await fetchWithSettings(`/api/play/streams?${query}`, settings);
+          const sources = await streamsRes.json();
 
-          if (!resolveRes.ok) {
+          if (!streamsRes.ok) {
             throw new Error(
-              resolved.message || resolved.error || "Not in Plex and no torrents found"
+              sources.message || sources.error || "Not in Plex and no torrents found"
             );
           }
 
-          if (resolved.source === "plex" && resolved.item) {
+          if (sources.source === "plex" && sources.item) {
             setResolveStatus("Playing from Plex…");
-            setItem(resolved.item);
+            setItem(sources.item);
             const rk =
-              resolved.item.plexRatingKey ??
-              resolved.watchId?.replace("plex-", "");
+              sources.item.plexRatingKey ??
+              sources.plexRatingKey ??
+              sources.watchId?.replace("plex-", "");
             if (rk) {
               await startPlexPlayback(rk);
               return;
             }
           }
 
-          if (resolved.source === "torrentio" && resolved.streamUrl && resolved.item) {
-            setResolveStatus("Streaming from Real-Debrid…");
-            const proxyUrl = resolved.streamUrl as string;
-            const match = proxyUrl.match(/[?&]url=([^&]+)/);
-            const rawUrl = match ? decodeURIComponent(match[1]) : proxyUrl;
-            await playRemoteStream(resolved.item, rawUrl, proxyUrl);
+          if (sources.source === "torrentio" && sources.streams?.length) {
+            setResolveStatus("");
+            setItem(sources.item ?? null);
+            setPlayQuery(query);
+            setTorrentStreams(sources.streams);
             return;
           }
 
@@ -368,7 +437,7 @@ export default function WatchPage() {
       setError("No stream available for this title. Add it via your library or Real-Debrid.");
     }
     load();
-  }, [id, storeSettings, plexReady, forceTranscode, applyTrackedPlayback]);
+  }, [id, searchParams, storeSettings, plexReady, forceTranscode, applyTrackedPlayback]);
 
   const handleAudioChange = useCallback(
     (index: number) => {
@@ -423,6 +492,24 @@ export default function WatchPage() {
       <div className="flex h-screen items-center justify-center bg-black">
         <div className="h-12 w-12 animate-spin rounded-full border-4 border-white/30 border-t-white" />
       </div>
+    );
+  }
+
+  if (torrentStreams && torrentStreams.length > 0 && item) {
+    return (
+      <StreamPicker
+        title={item.title}
+        subtitle={
+          searchParams.get("season") && searchParams.get("episode")
+            ? `Season ${searchParams.get("season")} · Episode ${searchParams.get("episode")}`
+            : undefined
+        }
+        streams={torrentStreams}
+        onSelect={handleStreamSelect}
+        onCancel={() => router.back()}
+        openingIndex={openingStreamIndex}
+        error={error || undefined}
+      />
     );
   }
 
@@ -490,6 +577,7 @@ export default function WatchPage() {
         plexToken={settings.plexToken}
         plexRatingKey={plexRatingKey ?? undefined}
         plexUrl={settings.plexUrl}
+        qualityHint={streamQuality}
       />
     </div>
   );

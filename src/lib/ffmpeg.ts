@@ -415,7 +415,7 @@ export async function startHlsTranscode(
           "-f",
           "hls",
           "-hls_time",
-          "4",
+          burnInImageSub ? "8" : "6",
           "-hls_list_size",
           "0",
           "-hls_flags",

@@ -21,6 +21,15 @@ import {
   isHlsSource,
   isSafariBrowser,
 } from "@/lib/cast-media";
+import {
+  applyHlsBufferTier,
+  buildHlsConfig,
+  getMinPlayBufferSeconds,
+  playWhenBuffered,
+  qualityTierFromHeight,
+  qualityTierFromHint,
+  type BufferTier,
+} from "@/lib/playback-buffer";
 import { TrackSelector } from "./TrackSelector";
 import type { StreamTrack } from "@/types/media-tracks";
 
@@ -43,6 +52,7 @@ interface VideoPlayerProps {
   plexToken?: string;
   plexRatingKey?: string;
   plexUrl?: string;
+  qualityHint?: string | null;
 }
 
 function formatTime(seconds: number): string {
@@ -72,12 +82,15 @@ export function VideoPlayer({
   plexToken,
   plexRatingKey,
   plexUrl,
+  qualityHint,
 }: VideoPlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const hideTimer = useRef<ReturnType<typeof setTimeout>>(null);
   const clickTimer = useRef<ReturnType<typeof setTimeout>>(null);
   const hlsRef = useRef<Hls | null>(null);
+  const bufferTierRef = useRef<BufferTier>(qualityTierFromHint(qualityHint));
+  const [initialBuffering, setInitialBuffering] = useState(false);
 
   const [playing, setPlaying] = useState(false);
   const [muted, setMuted] = useState(false);
@@ -112,18 +125,36 @@ export function VideoPlayer({
   });
 
   useEffect(() => {
+    bufferTierRef.current = qualityTierFromHint(qualityHint);
+  }, [qualityHint, src]);
+
+  useEffect(() => {
     setPlaybackError(null);
   }, [src]);
+
+  const updateBufferTier = useCallback((tier: BufferTier) => {
+    if (tier === bufferTierRef.current) return;
+    bufferTierRef.current = tier;
+    const hls = hlsRef.current;
+    if (hls) applyHlsBufferTier(hls, tier);
+  }, []);
 
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
 
+    const tier = qualityTierFromHint(qualityHint);
+    bufferTierRef.current = tier;
+
     if (isHls && !useNativeHls && Hls.isSupported()) {
-      const hls = new Hls({ enableWorker: true, lowLatencyMode: false });
+      const hls = new Hls(buildHlsConfig(tier));
       hls.loadSource(playbackSrc);
       hls.attachMedia(video);
-      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+      hls.on(Hls.Events.MANIFEST_PARSED, (_event, data) => {
+        const maxHeight = Math.max(0, ...data.levels.map((level) => level.height || 0));
+        if (maxHeight > 0) {
+          updateBufferTier(qualityTierFromHeight(maxHeight));
+        }
         if (hls.subtitleTracks.length > 0) {
           hls.subtitleDisplay = subtitleIndex !== null;
           if (subtitleIndex !== null) {
@@ -151,12 +182,13 @@ export function VideoPlayer({
       };
     }
 
+    video.preload = "auto";
     video.src = playbackSrc;
     return () => {
       video.removeAttribute("src");
       video.load();
     };
-  }, [playbackSrc, isHls, useNativeHls, subtitleIndex]);
+  }, [playbackSrc, isHls, useNativeHls, subtitleIndex, qualityHint, updateBufferTier]);
 
   useEffect(() => {
     const hls = hlsRef.current;
@@ -201,12 +233,19 @@ export function VideoPlayer({
     }, 3000);
   }, [playing]);
 
-  const togglePlay = () => {
+  const togglePlay = async () => {
     const video = videoRef.current;
     if (!video) return;
     if (video.paused) {
-      video.play();
-      setPlaying(true);
+      setInitialBuffering(true);
+      try {
+        await playWhenBuffered(video, getMinPlayBufferSeconds(bufferTierRef.current));
+        setPlaying(true);
+      } catch {
+        setPlaybackError("Playback failed to start.");
+      } finally {
+        setInitialBuffering(false);
+      }
     } else {
       video.pause();
       setPlaying(false);
@@ -315,6 +354,12 @@ export function VideoPlayer({
         {...({ "x-webkit-airplay": "allow", airplay: "allow" } as React.VideoHTMLAttributes<HTMLVideoElement>)}
         onWaiting={() => setBuffering(true)}
         onCanPlay={() => setBuffering(false)}
+        onLoadedMetadata={(e) => {
+          const v = e.currentTarget;
+          if (v.videoHeight > 0) {
+            updateBufferTier(qualityTierFromHeight(v.videoHeight));
+          }
+        }}
         onPlay={() => setPlaying(true)}
         onPause={() => setPlaying(false)}
         onTimeUpdate={(e) => {
@@ -356,9 +401,14 @@ export function VideoPlayer({
         </div>
       )}
 
-      {buffering && (
-        <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+      {(buffering || initialBuffering) && (
+        <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-3">
           <div className="h-12 w-12 animate-spin rounded-full border-4 border-white/30 border-t-white" />
+          {initialBuffering && (
+            <p className="text-sm text-netflix-light-gray">
+              Buffering ahead for smooth playback…
+            </p>
+          )}
         </div>
       )}
 

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getRealDebridToken, getTmdbApiKey, getTorrentioUrl } from "@/lib/env";
-import { resolvePlayback, parsePlayResolveParams } from "@/lib/play-resolve";
+import { listPlaybackSources, parsePlayResolveParams } from "@/lib/play-resolve";
 import { mergeSettings } from "@/lib/settings";
 
 export async function GET(request: NextRequest) {
@@ -16,7 +16,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Invalid tmdbId" }, { status: 400 });
   }
 
-  const result = await resolvePlayback({
+  const result = await listPlaybackSources({
     ...parsed,
     plexUrl: settings.plexUrl,
     plexToken: settings.plexToken,
