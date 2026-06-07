@@ -7,7 +7,9 @@ import { motion, AnimatePresence } from "framer-motion";
 import { X, Play, Plus, ThumbsUp, Volume2, VolumeX, Check } from "lucide-react";
 import { useDetailModal } from "@/providers/DetailModalProvider";
 import { useAppStore, isInMyList } from "@/lib/store";
+import { fetchWithSettings } from "@/lib/client-settings";
 import { backdropUrl, posterUrl } from "@/lib/tmdb";
+import { watchHrefForItem } from "@/lib/watch-url";
 import { TitleCard } from "./TitleCard";
 import type { MediaItem } from "@/lib/types";
 
@@ -58,7 +60,9 @@ export function DetailModal() {
       } else if (item.genres?.length) {
         setDetails(item);
         const genre = item.genres[0];
-        const res = await fetch(`/api/library?genre=${encodeURIComponent(genre)}`);
+        const res = await fetchWithSettings(
+          `/api/library?genre=${encodeURIComponent(genre)}`
+        );
         if (res.ok) {
           const data = await res.json();
           setSimilar(
@@ -148,7 +152,7 @@ export function DetailModal() {
                 <h2 className="mb-4 text-2xl font-bold md:text-4xl">{display.title}</h2>
                 <div className="flex flex-wrap gap-3">
                   <Link
-                    href={`/watch/${encodeURIComponent(display.id)}`}
+                    href={watchHrefForItem(display)}
                     className="flex items-center gap-2 rounded bg-white px-6 py-2 font-semibold text-black hover:bg-white/80"
                   >
                     <Play className="h-5 w-5 fill-current" />

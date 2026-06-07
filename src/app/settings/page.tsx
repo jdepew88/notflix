@@ -60,21 +60,24 @@ export default function SettingsPage() {
           setForm(configData.settings);
         }
       }
-      const libRes = await fetchWithSettings("/api/library", normalizedForm);
+      const libRes = await fetchWithSettings("/api/library?refresh=1", normalizedForm);
       const libData = libRes.ok ? await libRes.json() : null;
+      if (!libRes.ok) {
+        const err = libData?.error || `Library sync failed (${libRes.status})`;
+        setSyncResult(`Settings saved, but library sync failed: ${err}`);
+        return;
+      }
       setSaved(true);
       if (libData?.count) {
         setSyncResult(`Synced! Found ${libData.count} titles from ${libData.source}.`);
       } else if (libData?.message) {
         setSyncResult(libData.message);
-      } else if (libData?.error) {
-        setSyncResult(`Error: ${libData.error}`);
       } else {
         setSyncResult("Settings saved. Configure Plex or library path to load media.");
       }
       setTimeout(() => setSaved(false), 3000);
-    } catch {
-      setSyncResult("Failed to sync settings.");
+    } catch (err) {
+      setSyncResult(err instanceof Error ? err.message : "Failed to sync settings.");
     } finally {
       setSyncing(false);
     }
@@ -108,6 +111,17 @@ export default function SettingsPage() {
     setPlexStatus("ok");
     setPlexServer(auth.serverName ? `Signed in — ${auth.serverName}` : "Signed in to Plex");
     await syncSettingsToServer(nextForm);
+    const libRes = await fetchWithSettings("/api/library?refresh=1", nextForm);
+    if (libRes.ok) {
+      const libData = await libRes.json();
+      setSyncResult(
+        libData.count
+          ? `Signed in. Cached ${libData.count} titles from ${libData.source}.`
+          : "Signed in to Plex. Library sync complete."
+      );
+    } else {
+      setSyncResult("Signed in to Plex. Open Settings and Save & Sync if the library is empty.");
+    }
   };
 
   const signInWithPlex = async () => {

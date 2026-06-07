@@ -234,6 +234,21 @@ export default function WatchPage() {
       const useDirectPlay = Boolean(settings.directPlay) && !forceTranscode;
       const plexMode = useDirectPlay ? "direct" : "transcode";
 
+      let lookupId = id;
+      if (id.startsWith("series-")) {
+        const seriesRes = await fetchWithSettings("/api/library", settings);
+        if (seriesRes.ok) {
+          const seriesData = await seriesRes.json();
+          for (const row of seriesData.rows ?? []) {
+            const card = (row.items ?? []).find((i: MediaItem) => i.id === id);
+            if (card?.seriesId) {
+              lookupId = card.seriesId;
+              break;
+            }
+          }
+        }
+      }
+
       if (id.startsWith("debrid-")) {
         const torrentId = id.replace("debrid-", "");
         const token = settings.realDebridToken || process.env.NEXT_PUBLIC_DEBRID_TOKEN;
@@ -391,7 +406,7 @@ export default function WatchPage() {
       const libraryRes = await fetchWithSettings("/api/library", settings);
       if (libraryRes.ok) {
         const data = await libraryRes.json();
-        const found = (data.items ?? []).find((i: MediaItem) => i.id === id);
+        const found = (data.items ?? []).find((i: MediaItem) => i.id === lookupId);
         if (found) {
           setItem(found);
           if (found.plexRatingKey || found.id.startsWith("plex-")) {

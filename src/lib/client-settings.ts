@@ -54,11 +54,15 @@ function getClientSettingsDefaults(): AppSettings {
 }
 
 export async function syncSettingsToServer(settings: AppSettings): Promise<void> {
-  await fetch("/api/settings/sync", {
+  const res = await fetch("/api/settings/sync", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(settings),
   });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || `Settings sync failed (${res.status})`);
+  }
 }
 
 export async function fetchWithSettings(

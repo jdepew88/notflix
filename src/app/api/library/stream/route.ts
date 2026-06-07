@@ -1,15 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createReadStream, statSync } from "fs";
 import path from "path";
-import { getLibraryPath } from "@/lib/env";
+import { mergeSettings } from "@/lib/settings";
+import { resolveLibraryPath } from "@/lib/library-path";
 import { getMimeType } from "@/lib/library";
 
 export async function GET(request: NextRequest) {
   const filePath = request.nextUrl.searchParams.get("path");
-  const libraryPath = getLibraryPath();
+  const settings = mergeSettings(request);
+  const libraryPath = resolveLibraryPath(settings.libraryPath);
 
   if (!filePath || !libraryPath) {
-    return NextResponse.json({ error: "Missing path or LIBRARY_PATH" }, { status: 400 });
+    return NextResponse.json(
+      { error: "Missing path or library path not configured" },
+      { status: 400 }
+    );
   }
 
   const resolved = path.resolve(filePath);
@@ -29,6 +34,9 @@ export async function GET(request: NextRequest) {
       const parts = range.replace(/bytes=/, "").split("-");
       const start = parseInt(parts[0], 10);
       const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+      if (Number.isNaN(start) || start >= fileSize || end < start) {
+        return NextResponse.json({ error: "Invalid range" }, { status: 416 });
+      }
       const chunkSize = end - start + 1;
 
       const stream = createReadStream(resolved, { start, end });

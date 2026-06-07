@@ -105,7 +105,7 @@ function resolveFfmpegBinaries(): { ffmpeg: string; ffprobe: string } {
   return resolvedBinaries;
 }
 
-function getFfmpegPath(): string {
+export function getFfmpegPath(): string {
   return resolveFfmpegBinaries().ffmpeg;
 }
 

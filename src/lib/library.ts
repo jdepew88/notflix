@@ -1,6 +1,7 @@
 import fs from "fs/promises";
 import path from "path";
 import type { MediaItem } from "./types";
+import { slugifyMediaTitle } from "./media-slug";
 
 const VIDEO_EXTENSIONS = new Set([
   ".mkv",
@@ -19,10 +20,7 @@ function isVideoFile(filename: string): boolean {
 }
 
 function slugify(text: string): string {
-  return text
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-|-$/g, "");
+  return slugifyMediaTitle(text);
 }
 
 function parseMediaFilename(filename: string): {
@@ -133,13 +131,18 @@ export function buildContentRows(items: MediaItem[]): Array<{
   const seriesEntries = Array.from(series.entries());
   if (seriesEntries.length > 0) {
     const seriesItems: MediaItem[] = seriesEntries.map(([key, episodes]) => {
-      const first = episodes[0];
+      const sorted = [...episodes].sort(
+        (a, b) =>
+          (a.season ?? 0) - (b.season ?? 0) || (a.episode ?? 0) - (b.episode ?? 0)
+      );
+      const first = sorted[0];
       return {
         id: `series-${key}`,
         title: first.title,
         type: "series" as const,
         source: "library" as const,
         overview: `${episodes.length} episodes`,
+        seriesId: first.id,
       };
     });
     rows.push({ id: "series", title: "TV Shows", items: seriesItems });

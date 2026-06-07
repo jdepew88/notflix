@@ -8,9 +8,11 @@ import {
   saveServerSettings,
 } from "@/lib/settings";
 import { toClientSettings } from "@/lib/server-settings";
+import { deleteLibraryCache } from "@/lib/library-cache";
 
 export async function POST(request: NextRequest) {
   try {
+    const previous = mergeSettings(request);
     const body = await request.json();
     const merged = mergeSettingsFromBody(request, {
       realDebridToken: body.realDebridToken,
@@ -22,6 +24,18 @@ export async function POST(request: NextRequest) {
       directPlay: body.directPlay,
       plexOnly: body.plexOnly,
     });
+
+    const plexUrlChanged =
+      previous.plexUrl.replace(/\/$/, "") !== merged.plexUrl.replace(/\/$/, "");
+    const plexTokenChanged =
+      typeof body.plexToken === "string" &&
+      body.plexToken.length > 0 &&
+      previous.plexToken !== merged.plexToken;
+    const libraryPathChanged = previous.libraryPath !== merged.libraryPath;
+
+    if (plexUrlChanged || plexTokenChanged || libraryPathChanged) {
+      deleteLibraryCache();
+    }
 
     saveServerSettings(merged);
 

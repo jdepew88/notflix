@@ -6,7 +6,9 @@ import { MediaImage } from "@/components/ui/MediaImage";
 import { useParams } from "next/navigation";
 import { Play, Plus, Check, ArrowLeft } from "lucide-react";
 import { posterUrl, backdropUrl } from "@/lib/tmdb";
+import { watchHrefForItem } from "@/lib/watch-url";
 import { useAppStore, isInMyList } from "@/lib/store";
+import { fetchWithSettings } from "@/lib/client-settings";
 import type { MediaItem } from "@/lib/types";
 
 export default function TitleDetailPage() {
@@ -19,13 +21,22 @@ export default function TitleDetailPage() {
 
   useEffect(() => {
     async function load() {
-      if (id.startsWith("lib-") || id.startsWith("debrid-") || id.startsWith("plex-")) {
-        const res = await fetch("/api/library");
-        const data = res.ok ? await res.json() : { items: [] };
+      if (id.startsWith("lib-") || id.startsWith("debrid-") || id.startsWith("plex-") || id.startsWith("series-")) {
+        const res = await fetchWithSettings("/api/library");
+        const data = res.ok ? await res.json() : { items: [], rows: [] };
         const found = (data.items ?? []).find((i: MediaItem) => i.id === id);
         if (found) {
           setItem(found);
           return;
+        }
+        if (id.startsWith("series-")) {
+          for (const row of data.rows ?? []) {
+            const card = row.items?.find((i: MediaItem) => i.id === id);
+            if (card) {
+              setItem(card);
+              return;
+            }
+          }
         }
       }
       if (id.startsWith("debrid-")) {
@@ -97,7 +108,7 @@ export default function TitleDetailPage() {
 
             <div className="mb-6 flex flex-wrap gap-3">
               <Link
-                href={`/watch/${encodeURIComponent(item.id)}`}
+                href={watchHrefForItem(item)}
                 className="flex items-center gap-2 rounded bg-white px-6 py-2.5 font-semibold text-black hover:bg-white/80"
               >
                 <Play className="h-5 w-5 fill-current" />

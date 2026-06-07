@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { MediaImage } from "@/components/ui/MediaImage";
 import { Play, Info, Volume2, VolumeX } from "lucide-react";
 import { motion } from "framer-motion";
 import { backdropUrl } from "@/lib/tmdb";
+import { watchHrefForItem } from "@/lib/watch-url";
 import { useDetailModal } from "@/providers/DetailModalProvider";
 import type { MediaItem } from "@/lib/types";
 
@@ -13,35 +14,112 @@ interface HeroBannerProps {
   item: MediaItem;
 }
 
+const HERO_POLL_MS = 2000;
+const HERO_POLL_ATTEMPTS = 30;
+
 export function HeroBanner({ item }: HeroBannerProps) {
   const { openDetail } = useDetailModal();
   const backdrop = backdropUrl(item.backdropPath);
-  const watchHref = `/watch/${encodeURIComponent(item.id)}`;
+  const watchHref = watchHrefForItem(item);
+  const videoRef = useRef<HTMLVideoElement>(null);
   const [trailerKey, setTrailerKey] = useState<string | null>(null);
+  const [localVideoUrl, setLocalVideoUrl] = useState<string | null>(null);
+  const [videoMode, setVideoMode] = useState<"local" | "youtube" | null>(null);
   const [muted, setMuted] = useState(true);
   const [showVideo, setShowVideo] = useState(false);
 
-  const tmdbId = item.tmdbId ?? (item.id.startsWith("tmdb-") ? parseInt(item.id.replace("tmdb-", ""), 10) : null);
+  const tmdbId =
+    item.tmdbId ??
+    (item.id.startsWith("tmdb-") ? parseInt(item.id.replace("tmdb-", ""), 10) : null);
+
+  const isLibraryHero =
+    item.source === "library" || item.id.startsWith("plex-") || Boolean(item.plexPartKey);
 
   useEffect(() => {
-    if (!tmdbId) return;
-    fetch(`/api/catalog?type=videos&id=${tmdbId}`)
-      .then((r) => r.json())
-      .then((d) => {
-        if (d.key) {
-          setTrailerKey(d.key);
+    let cancelled = false;
+
+    async function loadTrailer() {
+      if (!tmdbId || cancelled) return;
+      const res = await fetch(`/api/catalog?type=videos&id=${tmdbId}`).catch(() => null);
+      if (cancelled || !res?.ok) return;
+      const data = await res.json().catch(() => null);
+      if (data?.key) {
+        setTrailerKey(data.key);
+        setVideoMode("youtube");
+        setShowVideo(true);
+      }
+    }
+
+    async function pollLocalPreview(url: string): Promise<boolean> {
+      for (let attempt = 0; attempt < HERO_POLL_ATTEMPTS; attempt++) {
+        if (cancelled) return false;
+        const head = await fetch(url, { method: "HEAD" }).catch(() => null);
+        if (head?.ok) {
+          setLocalVideoUrl(url);
+          setVideoMode("local");
           setShowVideo(true);
+          return true;
         }
-      })
-      .catch(() => {});
-  }, [tmdbId]);
+        if (attempt === 0) {
+          void fetch(url, { method: "POST" }).catch(() => null);
+        }
+        await new Promise((resolve) => setTimeout(resolve, HERO_POLL_MS));
+      }
+      return false;
+    }
+
+    async function loadHeroVideo() {
+      if (isLibraryHero) {
+        const url = `/api/hero/video?id=${encodeURIComponent(item.id)}`;
+        const ready = await pollLocalPreview(url);
+        if (ready || cancelled) return;
+      }
+      await loadTrailer();
+    }
+
+    setLocalVideoUrl(null);
+    setTrailerKey(null);
+    setVideoMode(null);
+    setShowVideo(false);
+
+    void loadHeroVideo();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [item.id, tmdbId, isLibraryHero]);
+
+  useEffect(() => {
+    if (videoRef.current) {
+      videoRef.current.muted = muted;
+    }
+  }, [muted, localVideoUrl]);
+
+  const hasVideo = showVideo && (videoMode === "local" ? Boolean(localVideoUrl) : Boolean(trailerKey));
 
   return (
     <section className="relative h-[56vw] max-h-[80vh] min-h-[280px] w-full md:min-h-[400px] lg:min-h-[500px]">
-      {showVideo && trailerKey ? (
+      {hasVideo && videoMode === "local" && localVideoUrl ? (
+        <div className="absolute inset-0 overflow-hidden">
+          <video
+            ref={videoRef}
+            src={localVideoUrl}
+            autoPlay
+            loop
+            muted
+            playsInline
+            className="pointer-events-none absolute left-1/2 top-1/2 h-[56.25vw] min-h-full min-w-full w-[177.78vh] -translate-x-1/2 -translate-y-1/2 object-cover"
+            onError={() => {
+              setLocalVideoUrl(null);
+              setShowVideo(Boolean(trailerKey));
+              if (trailerKey) setVideoMode("youtube");
+            }}
+          />
+        </div>
+      ) : hasVideo && videoMode === "youtube" && trailerKey ? (
         <div className="absolute inset-0 overflow-hidden">
           <iframe
-            src={`https://www.youtube.com/embed/${trailerKey}?autoplay=1&mute=1&controls=0&loop=1&playlist=${trailerKey}&modestbranding=1&rel=0&showinfo=0`}
+            src={`https://www.youtube.com/embed/${trailerKey}?autoplay=1&mute=${muted ? 1 : 0}&controls=0&loop=1&playlist=${trailerKey}&modestbranding=1&rel=0&showinfo=0`}
             className="pointer-events-none absolute left-1/2 top-1/2 h-[56.25vw] min-h-full min-w-full w-[177.78vh] -translate-x-1/2 -translate-y-1/2"
             allow="autoplay; encrypted-media"
             title={item.title}
@@ -63,7 +141,7 @@ export function HeroBanner({ item }: HeroBannerProps) {
       <div className="netflix-gradient-hero absolute inset-0" />
       <div className="netflix-gradient-bottom absolute inset-x-0 bottom-0 h-32" />
 
-      {trailerKey && (
+      {hasVideo && (
         <button
           type="button"
           onClick={() => setMuted(!muted)}

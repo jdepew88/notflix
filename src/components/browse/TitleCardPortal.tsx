@@ -10,6 +10,7 @@ import { usePortal } from "@/providers/PortalProvider";
 import { useDetailModal } from "@/providers/DetailModalProvider";
 import { useAppStore, isInMyList } from "@/lib/store";
 import { posterUrl, backdropUrl } from "@/lib/tmdb";
+import { watchHrefForItem } from "@/lib/watch-url";
 import { cn } from "@/lib/cn";
 
 function formatRuntime(minutes?: number): string {
@@ -94,7 +95,7 @@ export function TitleCardPortal() {
           <div className="mb-2 flex items-center gap-2">
             <button
               type="button"
-              onClick={() => router.push(`/watch/${encodeURIComponent(item.id)}`)}
+              onClick={() => router.push(watchHrefForItem(item))}
               className="flex h-8 w-8 items-center justify-center rounded-full bg-white text-black hover:bg-white/80"
             >
               <Play className="h-4 w-4 fill-current" />
