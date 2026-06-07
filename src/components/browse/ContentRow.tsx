@@ -4,14 +4,16 @@ import { useRef } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { TitleCardWithHover } from "./TitleCardWithHover";
 import type { MediaItem } from "@/lib/types";
+import { cn } from "@/lib/cn";
 
 interface ContentRowProps {
   title: string;
   items: MediaItem[];
   large?: boolean;
+  featured?: boolean;
 }
 
-export function ContentRow({ title, items }: ContentRowProps) {
+export function ContentRow({ title, items, large, featured }: ContentRowProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const scroll = (direction: "left" | "right") => {
@@ -23,10 +25,27 @@ export function ContentRow({ title, items }: ContentRowProps) {
 
   if (items.length === 0) return null;
 
+  const isLarge = large || featured;
+
   return (
-    <section className="group/row relative mb-6 md:mb-8">
-      <h2 className="mb-2 px-4 text-lg font-semibold md:px-12 md:text-xl lg:px-16">
+    <section
+      className={cn(
+        "group/row relative mb-6 md:mb-8",
+        featured && "mb-8 md:mb-10 rounded-lg bg-white/[0.03] py-4 md:py-6"
+      )}
+    >
+      <h2
+        className={cn(
+          "mb-2 px-4 font-semibold md:px-12 lg:px-16",
+          featured ? "text-xl md:text-2xl lg:text-3xl" : "text-lg md:text-xl"
+        )}
+      >
         {title}
+        {featured && (
+          <span className="ml-3 text-sm font-normal text-netflix-light-gray">
+            {items.length} titles
+          </span>
+        )}
       </h2>
       <div className="relative">
         <button
@@ -43,7 +62,12 @@ export function ContentRow({ title, items }: ContentRowProps) {
           className="row-scroll flex gap-2 overflow-x-auto px-4 md:gap-3 md:px-12 lg:px-16"
         >
           {items.map((item, i) => (
-            <TitleCardWithHover key={item.id} item={item} priority={i < 4} />
+            <TitleCardWithHover
+              key={item.id}
+              item={item}
+              priority={i < 4}
+              large={isLarge}
+            />
           ))}
         </div>
 

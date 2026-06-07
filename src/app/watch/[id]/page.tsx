@@ -54,9 +54,43 @@ export default function WatchPage() {
   const [playQuery, setPlayQuery] = useState<string | null>(null);
   const [openingStreamIndex, setOpeningStreamIndex] = useState<number | null>(null);
   const [streamQuality, setStreamQuality] = useState<string | null>(null);
+  const [isDebridPlayback, setIsDebridPlayback] = useState(false);
   const updateProgress = useAppStore((s) => s.updateProgress);
   const progress = getMediaProgress(id);
   const storeSettings = useAppStore((s) => s.settings);
+
+  const startRemux = useCallback(
+    async (opts: {
+      url?: string | null;
+      path?: string | null;
+      audio: number;
+      subtitle: number | null;
+    }) => {
+      const subParam = opts.subtitle === null ? "-1" : String(opts.subtitle);
+      let query = `audio=${opts.audio}&subtitle=${subParam}`;
+      if (opts.path) {
+        query = `path=${encodeURIComponent(opts.path)}&${query}`;
+      } else if (opts.url) {
+        query = `url=${encodeURIComponent(opts.url)}&${query}`;
+      } else {
+        return;
+      }
+
+      setTranscodeLoading(true);
+      try {
+        const res = await fetch(`/api/debrid/remux?${query}`);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Remux failed");
+        setStreamUrl(data.streamUrl);
+        setError("");
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Remux failed");
+      } finally {
+        setTranscodeLoading(false);
+      }
+    },
+    []
+  );
 
   const startTranscode = useCallback(
     async (opts: {
@@ -98,6 +132,7 @@ export default function WatchPage() {
       externalStreamUrl?: string;
       useDirectPlay: boolean;
       subtitleOverride?: number | null;
+      debridDirectPlay?: boolean;
     }) => {
       const tracksQuery = opts.path
         ? `path=${encodeURIComponent(opts.path)}`
@@ -106,6 +141,14 @@ export default function WatchPage() {
       const tracksData = await tracksRes.json();
 
       if (!tracksRes.ok) {
+        if (opts.debridDirectPlay && opts.proxiedUrl) {
+          setStreamUrl(opts.proxiedUrl);
+          setError(
+            tracksData.error ||
+              "Could not read embedded tracks — playing direct stream."
+          );
+          return;
+        }
         if (tracksData.ffmpegRequired && opts.proxiedUrl) {
           setStreamUrl(opts.proxiedUrl);
           setError(
@@ -130,6 +173,20 @@ export default function WatchPage() {
       setSourceUrl(opts.url ?? null);
       setSourcePath(opts.path ?? null);
       if (opts.proxiedUrl) setProxiedStreamUrl(opts.proxiedUrl);
+
+      if (opts.debridDirectPlay && opts.proxiedUrl) {
+        if (subtitle !== null) {
+          await startRemux({
+            url: opts.url,
+            path: opts.path,
+            audio,
+            subtitle,
+          });
+          return;
+        }
+        setStreamUrl(opts.proxiedUrl);
+        return;
+      }
 
       const needsSubTranscode = subtitle !== null;
       const canDirectPlay =
@@ -156,18 +213,20 @@ export default function WatchPage() {
         subtitle,
       });
     },
-    [startTranscode, proxiedStreamUrl]
+    [startTranscode, startRemux, proxiedStreamUrl]
   );
 
   const playRemoteStream = useCallback(
-    async (mediaItem: MediaItem, rawUrl: string, proxiedUrl: string) => {
+    async (mediaItem: MediaItem, rawUrl: string, proxiedUrl: string, debrid = false) => {
       const settings = getEffectiveSettings(storeSettings);
       const useDirectPlay = Boolean(settings.directPlay) && !forceTranscode;
+      setIsDebridPlayback(debrid);
       setItem(mediaItem);
       await applyTrackedPlayback({
         url: rawUrl,
         proxiedUrl,
         useDirectPlay,
+        debridDirectPlay: debrid,
       });
     },
     [storeSettings, forceTranscode, applyTrackedPlayback]
@@ -194,7 +253,7 @@ export default function WatchPage() {
         const proxyUrl = data.streamUrl as string;
         const match = proxyUrl.match(/[?&]url=([^&]+)/);
         const rawUrl = match ? decodeURIComponent(match[1]) : proxyUrl;
-        await playRemoteStream(data.item ?? item!, rawUrl, proxyUrl);
+        await playRemoteStream(data.item ?? item!, rawUrl, proxyUrl, true);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to open stream");
       } finally {
@@ -228,6 +287,7 @@ export default function WatchPage() {
       setPlayQuery(null);
       setOpeningStreamIndex(null);
       setStreamQuality(null);
+      setIsDebridPlayback(false);
       setError("");
 
       const settings = getEffectiveSettings(storeSettings);
@@ -275,11 +335,13 @@ export default function WatchPage() {
             source: "debrid",
           });
           setSourceUrl(data.streamUrl);
+          setIsDebridPlayback(true);
 
           await applyTrackedPlayback({
             url: data.streamUrl,
             proxiedUrl: `/api/proxy/stream?url=${encodeURIComponent(data.streamUrl)}`,
-            useDirectPlay,
+            useDirectPlay: true,
+            debridDirectPlay: true,
           });
         } catch (err) {
           setError(err instanceof Error ? err.message : "Failed to resolve stream");
@@ -458,15 +520,28 @@ export default function WatchPage() {
     (index: number) => {
       if (!sourceUrl && !sourcePath) return;
       setAudioIndex(index);
+      if (isDebridPlayback) {
+        startRemux({ url: sourceUrl, path: sourcePath, audio: index, subtitle: subtitleIndex });
+        return;
+      }
       startTranscode({ url: sourceUrl, path: sourcePath, audio: index, subtitle: subtitleIndex });
     },
-    [sourceUrl, sourcePath, subtitleIndex, startTranscode]
+    [sourceUrl, sourcePath, subtitleIndex, startTranscode, startRemux, isDebridPlayback]
   );
 
   const handleSubtitleChange = useCallback(
     (index: number | null) => {
       if (!sourceUrl && !sourcePath) return;
       setSubtitleIndex(index);
+      if (isDebridPlayback) {
+        if (index === null && proxiedStreamUrl) {
+          setStreamUrl(proxiedStreamUrl);
+          setError("");
+          return;
+        }
+        startRemux({ url: sourceUrl, path: sourcePath, audio: audioIndex, subtitle: index });
+        return;
+      }
       const settings = getEffectiveSettings(storeSettings);
       void applyTrackedPlayback({
         url: sourceUrl ?? undefined,
@@ -476,7 +551,17 @@ export default function WatchPage() {
         subtitleOverride: index,
       });
     },
-    [sourceUrl, sourcePath, proxiedStreamUrl, applyTrackedPlayback, storeSettings, forceTranscode]
+    [
+      sourceUrl,
+      sourcePath,
+      audioIndex,
+      proxiedStreamUrl,
+      applyTrackedPlayback,
+      storeSettings,
+      forceTranscode,
+      isDebridPlayback,
+      startRemux,
+    ]
   );
 
   const handleRequestTranscode = useCallback(() => {
@@ -487,13 +572,15 @@ export default function WatchPage() {
 
   const settings = getEffectiveSettings(storeSettings);
   const isDirectPlay =
-    settings.directPlay &&
+    (isDebridPlayback || settings.directPlay) &&
     !forceTranscode &&
     !!streamUrl &&
-    (streamUrl.includes("/api/proxy/stream") || streamUrl.includes("/api/plex/stream"));
-  const transcodeAvailable = !!sourceUrl || !!sourcePath || !!plexRatingKey;
+    (streamUrl.includes("/api/proxy/stream") ||
+      streamUrl.includes("/api/plex/stream"));
+  const transcodeAvailable =
+    !isDebridPlayback && (!!sourceUrl || !!sourcePath || !!plexRatingKey);
   const hasTrackControls =
-    audioTracks.length > 1 || subtitleTracks.length > 0;
+    audioTracks.length > 0 || subtitleTracks.length > 0;
 
   const handleProgress = useCallback(
     (_seconds: number, percent: number) => {
@@ -552,7 +639,9 @@ export default function WatchPage() {
         <div className="h-12 w-12 animate-spin rounded-full border-4 border-white/30 border-t-white" />
         <p className="mt-4 text-sm text-netflix-light-gray">
           {transcodeLoading
-            ? "Preparing stream with subtitles..."
+            ? isDebridPlayback
+              ? "Switching audio or subtitles..."
+              : "Preparing stream with subtitles..."
             : resolveStatus || "Loading..."}
         </p>
       </div>

@@ -83,8 +83,13 @@ export function filterRowItems(
   return items.filter((item) => itemMatchesStreamingService(item, serviceId));
 }
 
-/** Rows that should not be filtered by streaming service (user playback state). */
-export const STREAMING_FILTER_EXEMPT_ROW_IDS = new Set(["continue-watching"]);
+/** Rows that should not be filtered by streaming service (user playback state / library). */
+export const STREAMING_FILTER_EXEMPT_ROW_IDS = new Set([
+  "continue-watching",
+  "plex-recent",
+  "plex-movies",
+  "plex-shows",
+]);
 
 export function getStreamingServiceLabel(
   serviceId: StreamingServiceFilterId

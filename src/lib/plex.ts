@@ -26,6 +26,7 @@ interface PlexMetadata {
   year?: number;
   duration?: number;
   guid?: string;
+  addedAt?: number;
   parentRatingKey?: string;
   grandparentTitle?: string;
   parentIndex?: number;
@@ -129,6 +130,7 @@ function metadataToItem(
     tvdbId,
     plexRatingKey: meta.ratingKey,
     genres: meta.Genre?.map((g) => g.tag).filter(Boolean) ?? [],
+    libraryAddedAt: meta.addedAt,
   };
 }
 
@@ -158,9 +160,18 @@ export async function refreshPlexLibraries(
   return { sections: count, names };
 }
 
+export interface PlexFetchProgress {
+  phase: "sections" | "metadata";
+  message: string;
+  sectionIndex: number;
+  sectionCount: number;
+  itemsLoaded: number;
+}
+
 export async function fetchPlexLibrary(
   plexUrl: string,
-  token: string
+  token: string,
+  onProgress?: (progress: PlexFetchProgress) => void
 ): Promise<MediaItem[]> {
   const sections = await plexGet<PlexMediaContainer>(
     plexUrl,
@@ -168,16 +179,34 @@ export async function fetchPlexLibrary(
     "/library/sections"
   );
 
-  const directories = sections.MediaContainer?.Directory ?? [];
+  const directories = (sections.MediaContainer?.Directory ?? []).filter((s) =>
+    ["movie", "show"].includes(s.type)
+  );
   const items: MediaItem[] = [];
+  const sectionCount = directories.length;
 
-  for (const section of directories) {
-    if (!["movie", "show"].includes(section.type)) continue;
+  onProgress?.({
+    phase: "sections",
+    message: `Found ${sectionCount} Plex libraries`,
+    sectionIndex: 0,
+    sectionCount,
+    itemsLoaded: 0,
+  });
+
+  for (let i = 0; i < directories.length; i++) {
+    const section = directories[i];
+    onProgress?.({
+      phase: "metadata",
+      message: `Loading ${section.title}…`,
+      sectionIndex: i + 1,
+      sectionCount,
+      itemsLoaded: items.length,
+    });
 
     const data = await plexGet<PlexMediaContainer>(
       plexUrl,
       token,
-      `/library/sections/${section.key}/all`
+      `/library/sections/${section.key}/all?sort=addedAt:desc`
     );
 
     const metadata = data.MediaContainer?.Metadata ?? [];
@@ -271,20 +300,39 @@ export function buildContentRowsFromPlex(items: MediaItem[]): Array<{
   id: string;
   title: string;
   items: MediaItem[];
+  featured?: boolean;
 }> {
   const movies = items.filter((i) => i.type === "movie");
   const series = items.filter((i) => i.type === "series");
-  const rows: Array<{ id: string; title: string; items: MediaItem[] }> = [];
+  const rows: Array<{ id: string; title: string; items: MediaItem[]; featured?: boolean }> = [];
+
+  if (movies.length > 0) {
+    rows.push({
+      id: "plex-movies",
+      title: "Movies",
+      items: movies,
+      featured: true,
+    });
+  }
+  if (series.length > 0) {
+    rows.push({
+      id: "plex-shows",
+      title: "TV Shows",
+      items: series,
+      featured: true,
+    });
+  }
+
+  const recent = [...items]
+    .filter((i) => i.type === "movie" || i.type === "series")
+    .sort((a, b) => (b.libraryAddedAt ?? 0) - (a.libraryAddedAt ?? 0))
+    .slice(0, 25);
+  if (recent.length > 0) {
+    rows.push({ id: "plex-recent", title: "Recently Added", items: recent });
+  }
 
   const genreRows = buildGenreRows(items);
   rows.push(...genreRows);
-
-  if (movies.length > 0) {
-    rows.push({ id: "plex-movies", title: "Movies", items: movies });
-  }
-  if (series.length > 0) {
-    rows.push({ id: "plex-shows", title: "TV Shows", items: series });
-  }
 
   return rows;
 }

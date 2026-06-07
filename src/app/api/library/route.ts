@@ -4,11 +4,28 @@ import { filterByGenre } from "@/lib/plex";
 import { resolveLibraryPath } from "@/lib/library-path";
 import {
   cacheMatchesSettings,
-  readLibraryCache,
+  type LibraryCacheData,
 } from "@/lib/library-cache";
-import { buildLibraryCatalog } from "@/lib/library-sync";
+import {
+  databaseCompatibleWithSettings,
+  readLibraryDatabase,
+  databaseAsCache,
+} from "@/lib/library-store";
+import {
+  isLibrarySyncRunning,
+  startBackgroundLibrarySync,
+  buildLibraryCatalog,
+} from "@/lib/library-sync";
+import { readLibrarySyncState, syncProgressPercent } from "@/lib/library-sync-state";
 import { attachWatchProvidersToLibrary } from "@/lib/library-providers";
 import { enrichItemsWithWatchProviders } from "@/lib/tmdb";
+
+function libraryConfigured(settings: ReturnType<typeof mergeSettings>): boolean {
+  return Boolean(
+    (settings.plexUrl?.trim() && settings.plexToken?.trim()) ||
+      resolveLibraryPath(settings.libraryPath)
+  );
+}
 
 export async function GET(request: NextRequest) {
   const settings = mergeSettings(request);
@@ -18,6 +35,8 @@ export async function GET(request: NextRequest) {
   const hasPlexUrl = Boolean(settings.plexUrl?.trim());
   const hasPlexToken = Boolean(settings.plexToken?.trim());
   const libraryPath = resolveLibraryPath(settings.libraryPath);
+  const syncState = readLibrarySyncState();
+  const syncing = isLibrarySyncRunning() || syncState.status === "running";
 
   try {
     if (hasPlexUrl && !hasPlexToken) {
@@ -32,27 +51,56 @@ export async function GET(request: NextRequest) {
         { status: 400 }
       );
     }
-    if (!hasPlexUrl && !hasPlexToken && !libraryPath) {
+    if (!libraryConfigured(settings)) {
       return NextResponse.json({
         items: [],
         rows: [],
         source: "none",
+        syncing: false,
         message:
           "Configure Plex URL + token or library path in Settings, then click Save & Sync Library.",
       });
     }
 
-    let cache = !forceRefresh ? readLibraryCache() : null;
+    const db = readLibraryDatabase();
+    let cache: LibraryCacheData | null = db ? databaseAsCache(db) : null;
     let servedFromCache = false;
-    if (cache && cacheMatchesSettings(cache, settings)) {
-      servedFromCache = true;
-    } else {
-      cache = null;
+    let stale = false;
+
+    if (cache && db) {
+      if (cacheMatchesSettings(cache, settings)) {
+        servedFromCache = true;
+      } else if (databaseCompatibleWithSettings(db, settings)) {
+        servedFromCache = true;
+        stale = true;
+      } else {
+        cache = null;
+      }
     }
 
-    if (!cache) {
-      cache = await buildLibraryCatalog(settings, { forceRefresh });
+    if (!cache && forceRefresh) {
+      cache = await buildLibraryCatalog(settings, { forceRefresh: true });
       servedFromCache = false;
+    } else if (!cache) {
+      if (!syncing) {
+        void startBackgroundLibrarySync(settings);
+      }
+      return NextResponse.json({
+        items: [],
+        rows: [],
+        source: "none",
+        count: 0,
+        syncing: true,
+        sync: {
+          ...syncState,
+          percent: syncProgressPercent(syncState),
+        },
+        message: "Library sync in progress…",
+      });
+    } else if (forceRefresh && !syncing) {
+      void startBackgroundLibrarySync(settings, { forceRefresh: true });
+    } else if (stale && !syncing && !forceRefresh) {
+      void startBackgroundLibrarySync(settings);
     }
 
     const country = request.nextUrl.searchParams.get("country") ?? "US";
@@ -76,6 +124,8 @@ export async function GET(request: NextRequest) {
         genre: genreFilter,
         genres: cache.genres,
         cachedAt: cache.cachedAt,
+        syncing,
+        stale,
       });
     }
 
@@ -83,19 +133,23 @@ export async function GET(request: NextRequest) {
       cache = await attachWatchProvidersToLibrary(cache, settings.tmdbApiKey, { country });
     }
 
-    const genres = cache.genres;
-
     return NextResponse.json({
       items: cache.items,
       rows: cache.rows,
       source: cache.source,
       count: cache.items.length,
-      genres,
+      genres: cache.genres,
       featuredHeroId: cache.featuredHeroId,
       heroPrimaryId: cache.heroPrimaryId ?? cache.featuredHeroId,
       heroVideoError: cache.heroVideoError ?? null,
       cached: servedFromCache,
       cachedAt: cache.cachedAt,
+      syncing,
+      stale,
+      persisted: true,
+      sync: syncing
+        ? { ...syncState, percent: syncProgressPercent(syncState) }
+        : undefined,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to load library";

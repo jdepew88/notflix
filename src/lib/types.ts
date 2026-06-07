@@ -42,6 +42,8 @@ export interface MediaItem {
   seriesId?: string;
   debridId?: string;
   progress?: number;
+  /** Plex library added-at timestamp (seconds). */
+  libraryAddedAt?: number;
 }
 
 export interface ContentRow {

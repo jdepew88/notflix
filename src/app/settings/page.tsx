@@ -7,6 +7,7 @@ import { useAppStore } from "@/lib/store";
 import { syncSettingsToServer, fetchWithSettings } from "@/lib/client-settings";
 import { CONTAINER_MEDIA_PATH, CONTAINER_VIDEO_PATH, HOST_MEDIA_PATH, mapHostPathToContainer } from "@/lib/library-path";
 import { isPlexUnauthorizedMessage } from "@/lib/plex-auth-client";
+import { LibrarySyncBar, type LibrarySyncStatus } from "@/components/browse/LibrarySyncBar";
 import { cn } from "@/lib/cn";
 
 export default function SettingsPage() {
@@ -42,6 +43,21 @@ export default function SettingsPage() {
     setForm(settings);
   }, [settings]);
 
+  const [syncProgress, setSyncProgress] = useState<LibrarySyncStatus | null>(null);
+
+  async function pollLibrarySyncUntilDone(): Promise<LibrarySyncStatus | null> {
+    for (let i = 0; i < 120; i++) {
+      const res = await fetch("/api/library/sync").catch(() => null);
+      if (!res?.ok) break;
+      const data = (await res.json()) as LibrarySyncStatus;
+      setSyncProgress(data);
+      const running = data.running || data.status === "running";
+      if (!running) return data;
+      await new Promise((r) => setTimeout(r, 1500));
+    }
+    return null;
+  }
+
   const saveAndSync = async () => {
     const normalizedForm = {
       ...form,
@@ -51,6 +67,7 @@ export default function SettingsPage() {
     setForm(normalizedForm);
     setSyncing(true);
     setSyncResult("");
+    setSyncProgress(null);
     try {
       await syncSettingsToServer(normalizedForm);
       const configRes = await fetch("/api/settings/sync?config=1", { credentials: "same-origin" });
@@ -61,7 +78,16 @@ export default function SettingsPage() {
           setForm(configData.settings);
         }
       }
-      const libRes = await fetchWithSettings("/api/library?refresh=1", normalizedForm);
+
+      const syncStart = await fetchWithSettings("/api/library/sync?force=1", normalizedForm, {
+        method: "POST",
+      });
+      const syncData = syncStart.ok ? await syncStart.json() : null;
+      if (syncData?.sync) setSyncProgress(syncData.sync);
+
+      await pollLibrarySyncUntilDone();
+
+      const libRes = await fetchWithSettings("/api/library", normalizedForm);
       const libData = libRes.ok ? await libRes.json() : null;
       if (!libRes.ok) {
         const err = libData?.error || `Library sync failed (${libRes.status})`;
@@ -70,7 +96,9 @@ export default function SettingsPage() {
       }
       setSaved(true);
       if (libData?.count) {
-        setSyncResult(`Synced! Found ${libData.count} titles from ${libData.source}.`);
+        setSyncResult(
+          `Synced! Saved ${libData.count} titles from ${libData.source} to the library database.`
+        );
       } else if (libData?.message) {
         setSyncResult(libData.message);
       } else {
@@ -81,6 +109,7 @@ export default function SettingsPage() {
       setSyncResult(err instanceof Error ? err.message : "Failed to sync settings.");
     } finally {
       setSyncing(false);
+      setSyncProgress(null);
     }
   };
 
@@ -603,6 +632,8 @@ export default function SettingsPage() {
           />
         </section>
         )}
+
+        <LibrarySyncBar sync={syncProgress} className="rounded bg-netflix-dark" />
 
         <button
           type="button"

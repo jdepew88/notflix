@@ -43,7 +43,7 @@ export function TrackSelector({
 
   const sortedSubs = sortSubtitleTracks(subtitleTracks);
 
-  if (audioTracks.length <= 1 && subtitleTracks.length === 0) return null;
+  if (audioTracks.length === 0 && subtitleTracks.length === 0) return null;
 
   return (
     <div className="relative">

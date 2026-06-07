@@ -2,23 +2,45 @@ import { NextRequest, NextResponse } from "next/server";
 import { mergeSettings } from "@/lib/settings";
 import { refreshPlexLibraries } from "@/lib/plex";
 import { resolveLibraryPath } from "@/lib/library-path";
-import { buildLibraryCatalog } from "@/lib/library-sync";
+import {
+  isLibrarySyncRunning,
+  startBackgroundLibrarySync,
+  buildLibraryCatalog,
+} from "@/lib/library-sync";
+import { readLibrarySyncState, syncProgressPercent } from "@/lib/library-sync-state";
+import { readLibraryDatabase } from "@/lib/library-store";
 
 export async function POST(request: NextRequest) {
   const settings = mergeSettings(request);
 
   try {
     if (settings.plexUrl && settings.plexToken) {
-      const refresh = await refreshPlexLibraries(settings.plexUrl, settings.plexToken);
-      const cache = await buildLibraryCatalog(settings, { forceRefresh: true });
+      if (isLibrarySyncRunning()) {
+        const state = readLibrarySyncState();
+        return NextResponse.json({
+          success: true,
+          running: true,
+          message: "Library sync already in progress",
+          sync: { ...state, percent: syncProgressPercent(state) },
+        });
+      }
+
+      void refreshPlexLibraries(settings.plexUrl, settings.plexToken).catch((err) => {
+        console.warn("[library/refresh] Plex section refresh failed:", err);
+      });
+
+      void startBackgroundLibrarySync(settings, { forceRefresh: true });
+
+      const db = readLibraryDatabase();
       return NextResponse.json({
         success: true,
-        refreshedAt: cache.cachedAt,
-        sectionsRefreshed: refresh.sections,
-        sectionNames: refresh.names,
-        titleCount: cache.items.length,
-        featuredHeroId: cache.featuredHeroId,
-        message: `Triggered refresh on ${refresh.sections} library section(s). Cached ${cache.items.length} titles.`,
+        running: true,
+        titleCount: db?.items.length ?? 0,
+        message: "Library sync started — watch the progress bar on Browse.",
+        sync: {
+          ...readLibrarySyncState(),
+          percent: syncProgressPercent(readLibrarySyncState()),
+        },
       });
     }
 
@@ -33,10 +55,11 @@ export async function POST(request: NextRequest) {
     const cache = await buildLibraryCatalog(settings, { forceRefresh: true });
     return NextResponse.json({
       success: true,
+      running: false,
       refreshedAt: cache.cachedAt,
       titleCount: cache.items.length,
       featuredHeroId: cache.featuredHeroId,
-      message: `Rescanned library path. Cached ${cache.items.length} titles.`,
+      message: `Rescanned library path. Saved ${cache.items.length} titles to library database.`,
     });
   } catch (err) {
     return NextResponse.json(

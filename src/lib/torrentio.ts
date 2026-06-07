@@ -21,7 +21,7 @@ export function normalizeTorrentioBaseUrl(url: string): string {
 }
 
 export function buildDefaultTorrentioUrl(realDebridToken: string): string {
-  return `https://torrentio.strem.fun/realdebrid=${encodeURIComponent(realDebridToken)}|sort=quality|qualityfilter=480p,scr,cam,unknown`;
+  return `https://torrentio.strem.fun/realdebrid=${encodeURIComponent(realDebridToken)}|sort=quality|qualityfilter=480p,scr,cam,unknown|language=english`;
 }
 
 export function buildStreamVideoId(options: {
@@ -86,8 +86,42 @@ export interface TorrentioStreamOption {
   recommended: boolean;
 }
 
+const NON_ENGLISH_MARKERS = [
+  "french",
+  "german",
+  "spanish",
+  "italian",
+  "portuguese",
+  "russian",
+  "hindi",
+  "tamil",
+  "telugu",
+  "japanese",
+  "korean",
+  "chinese",
+  "mandarin",
+  "cantonese",
+  "vostfr",
+  "multi.french",
+  "multi-french",
+];
+
+function streamLabel(stream: TorrentioStream): string {
+  return `${stream.name ?? ""} ${stream.title ?? ""}`.toLowerCase();
+}
+
+function isLikelyEnglishStream(stream: TorrentioStream): boolean {
+  const label = streamLabel(stream);
+  if (NON_ENGLISH_MARKERS.some((m) => label.includes(m))) return false;
+  if (label.includes("english") || label.includes(" eng ") || /\beng\b/.test(label)) {
+    return true;
+  }
+  if (label.includes("multi")) return true;
+  return !/\b(fr|de|es|it|pt|ru|ja|ko|zh)\b/.test(label);
+}
+
 export function streamScore(stream: TorrentioStream): number {
-  const label = `${stream.name ?? ""} ${stream.title ?? ""}`.toLowerCase();
+  const label = streamLabel(stream);
   if (label.includes("download") || label.includes("⬇")) return -100;
   if (stream.behaviorHints?.notWebReady) return -50;
   if (!stream.url?.startsWith("http")) return -200;
@@ -102,6 +136,11 @@ export function streamScore(stream: TorrentioStream): number {
   if (label.includes("rd") || label.includes("real-debrid") || label.includes("debrid")) {
     score += 5;
   }
+  if (label.includes("aac")) score += 15;
+  if (label.includes("x264") || label.includes("h264") || label.includes("h.264")) score += 10;
+  if (label.includes("x265") || label.includes("hevc") || label.includes("h265")) score += 6;
+  if (label.includes(".mp4") || label.includes(" mp4")) score += 8;
+  if (label.includes("english") || label.includes(" eng ")) score += 12;
   return score;
 }
 
@@ -142,6 +181,7 @@ export function listPlayableTorrentioStreams(streams: TorrentioStream[]): {
 } {
   const playable = streams
     .filter((s) => s.url?.startsWith("http"))
+    .filter(isLikelyEnglishStream)
     .sort((a, b) => streamScore(b) - streamScore(a));
 
   const options = playable.map((stream, index) =>
@@ -154,6 +194,7 @@ export function listPlayableTorrentioStreams(streams: TorrentioStream[]): {
 export function pickBestTorrentioStream(streams: TorrentioStream[]): TorrentioStream | null {
   const candidates = streams
     .filter((s) => s.url?.startsWith("http"))
+    .filter(isLikelyEnglishStream)
     .sort((a, b) => streamScore(b) - streamScore(a));
 
   return candidates[0] ?? null;

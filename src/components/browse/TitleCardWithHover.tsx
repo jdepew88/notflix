@@ -15,9 +15,10 @@ interface TitleCardWithHoverProps {
   item: MediaItem;
   className?: string;
   priority?: boolean;
+  large?: boolean;
 }
 
-export function TitleCardWithHover({ item, className, priority }: TitleCardWithHoverProps) {
+export function TitleCardWithHover({ item, className, priority, large }: TitleCardWithHoverProps) {
   const ref = useRef<HTMLDivElement>(null);
   const router = useRouter();
   const { setPortal, item: portalItem } = usePortal();
@@ -74,7 +75,9 @@ export function TitleCardWithHover({ item, className, priority }: TitleCardWithH
       }}
       className={cn(
         "relative shrink-0 cursor-pointer overflow-hidden rounded-sm bg-netflix-dark transition-transform duration-300",
-        "w-[140px] sm:w-[160px] md:w-[200px] lg:w-[240px]",
+        large
+          ? "w-[160px] sm:w-[180px] md:w-[220px] lg:w-[260px]"
+          : "w-[140px] sm:w-[160px] md:w-[200px] lg:w-[240px]",
         isActive && "z-30 scale-105",
         className
       )}

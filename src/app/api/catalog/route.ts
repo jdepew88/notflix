@@ -1,9 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
   getTrending,
+  getTrendingTv,
   getPopular,
+  getPopularTv,
   getTopRated,
+  getTopRatedTv,
   getNowPlaying,
+  getOnTheAir,
+  getAiringToday,
   searchMovies,
   getMovieDetails,
   getMovieVideos,
@@ -13,6 +18,7 @@ import {
   enrichItemsWithWatchProviders,
 } from "@/lib/tmdb";
 import { getTmdbApiKey } from "@/lib/env";
+import { mergeSettings } from "@/lib/settings";
 import type { MediaItem } from "@/lib/types";
 
 async function withWatchProviders(
@@ -23,10 +29,15 @@ async function withWatchProviders(
   return enrichItemsWithWatchProviders(items, apiKey, country);
 }
 
+function resolveApiKey(request: NextRequest): string | undefined {
+  const settings = mergeSettings(request);
+  return settings.tmdbApiKey?.trim() || getTmdbApiKey() || undefined;
+}
+
 export async function GET(request: NextRequest) {
-  const apiKey = getTmdbApiKey();
+  const apiKey = resolveApiKey(request);
   if (!apiKey) {
-    return NextResponse.json({ error: "TMDB_API_KEY not configured" }, { status: 503 });
+    return NextResponse.json({ error: "TMDB API key not configured" }, { status: 503 });
   }
 
   const type = request.nextUrl.searchParams.get("type") ?? "trending";
@@ -84,23 +95,38 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    let items;
+    let items: MediaItem[];
     switch (type) {
       case "popular":
-        items = await getPopular(apiKey);
+        items = await getPopular(apiKey, page);
+        break;
+      case "popular_tv":
+        items = await getPopularTv(apiKey, page);
         break;
       case "top_rated":
-        items = await getTopRated(apiKey);
+        items = await getTopRated(apiKey, page);
+        break;
+      case "top_rated_tv":
+        items = await getTopRatedTv(apiKey, page);
         break;
       case "now_playing":
-        items = await getNowPlaying(apiKey);
+        items = await getNowPlaying(apiKey, page);
+        break;
+      case "trending_tv":
+        items = await getTrendingTv(apiKey, page);
+        break;
+      case "on_the_air":
+        items = await getOnTheAir(apiKey, page);
+        break;
+      case "airing_today":
+        items = await getAiringToday(apiKey, page);
         break;
       case "search":
         if (!query) return NextResponse.json({ items: [] });
         items = await searchMovies(apiKey, query);
         break;
       default:
-        items = await getTrending(apiKey);
+        items = await getTrending(apiKey, page);
     }
     return NextResponse.json({
       items: await withWatchProviders(items, apiKey, country),

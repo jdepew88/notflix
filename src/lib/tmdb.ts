@@ -140,6 +140,23 @@ interface TmdbMovie {
 
 interface TmdbResponse {
   results: TmdbMovie[];
+  total_pages?: number;
+}
+
+interface TmdbTv {
+  id: number;
+  name: string;
+  overview: string;
+  poster_path: string | null;
+  backdrop_path: string | null;
+  first_air_date: string;
+  vote_average: number;
+  genre_ids: number[];
+}
+
+interface TmdbTvResponse {
+  results: TmdbTv[];
+  total_pages?: number;
 }
 
 function toMediaItem(movie: TmdbMovie): MediaItem {
@@ -159,24 +176,66 @@ function toMediaItem(movie: TmdbMovie): MediaItem {
   };
 }
 
-export async function getTrending(apiKey: string): Promise<MediaItem[]> {
-  const data = await tmdbFetch<TmdbResponse>("/trending/movie/week", apiKey);
+function toTvMediaItem(show: TmdbTv): MediaItem {
+  return {
+    id: `tmdb-tv-${show.id}`,
+    tmdbId: show.id,
+    mediaType: "tv",
+    title: show.name,
+    overview: show.overview,
+    posterPath: show.poster_path ?? undefined,
+    backdropPath: show.backdrop_path ?? undefined,
+    releaseDate: show.first_air_date,
+    rating: show.vote_average,
+    genreIds: show.genre_ids,
+    type: "series",
+    source: "tmdb",
+  };
+}
+
+export async function getTrending(apiKey: string, page = 1): Promise<MediaItem[]> {
+  const data = await tmdbFetch<TmdbResponse>(`/trending/movie/week?page=${page}`, apiKey);
   return data.results.map(toMediaItem);
 }
 
-export async function getPopular(apiKey: string): Promise<MediaItem[]> {
-  const data = await tmdbFetch<TmdbResponse>("/movie/popular", apiKey);
+export async function getTrendingTv(apiKey: string, page = 1): Promise<MediaItem[]> {
+  const data = await tmdbFetch<TmdbTvResponse>(`/trending/tv/week?page=${page}`, apiKey);
+  return data.results.map(toTvMediaItem);
+}
+
+export async function getPopular(apiKey: string, page = 1): Promise<MediaItem[]> {
+  const data = await tmdbFetch<TmdbResponse>(`/movie/popular?page=${page}`, apiKey);
   return data.results.map(toMediaItem);
 }
 
-export async function getTopRated(apiKey: string): Promise<MediaItem[]> {
-  const data = await tmdbFetch<TmdbResponse>("/movie/top_rated", apiKey);
+export async function getPopularTv(apiKey: string, page = 1): Promise<MediaItem[]> {
+  const data = await tmdbFetch<TmdbTvResponse>(`/tv/popular?page=${page}`, apiKey);
+  return data.results.map(toTvMediaItem);
+}
+
+export async function getTopRated(apiKey: string, page = 1): Promise<MediaItem[]> {
+  const data = await tmdbFetch<TmdbResponse>(`/movie/top_rated?page=${page}`, apiKey);
   return data.results.map(toMediaItem);
 }
 
-export async function getNowPlaying(apiKey: string): Promise<MediaItem[]> {
-  const data = await tmdbFetch<TmdbResponse>("/movie/now_playing", apiKey);
+export async function getTopRatedTv(apiKey: string, page = 1): Promise<MediaItem[]> {
+  const data = await tmdbFetch<TmdbTvResponse>(`/tv/top_rated?page=${page}`, apiKey);
+  return data.results.map(toTvMediaItem);
+}
+
+export async function getNowPlaying(apiKey: string, page = 1): Promise<MediaItem[]> {
+  const data = await tmdbFetch<TmdbResponse>(`/movie/now_playing?page=${page}`, apiKey);
   return data.results.map(toMediaItem);
+}
+
+export async function getOnTheAir(apiKey: string, page = 1): Promise<MediaItem[]> {
+  const data = await tmdbFetch<TmdbTvResponse>(`/tv/on_the_air?page=${page}`, apiKey);
+  return data.results.map(toTvMediaItem);
+}
+
+export async function getAiringToday(apiKey: string, page = 1): Promise<MediaItem[]> {
+  const data = await tmdbFetch<TmdbTvResponse>(`/tv/airing_today?page=${page}`, apiKey);
+  return data.results.map(toTvMediaItem);
 }
 
 export async function searchMovies(apiKey: string, query: string): Promise<MediaItem[]> {

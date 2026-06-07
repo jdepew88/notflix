@@ -9,6 +9,7 @@ import {
 } from "@/lib/settings";
 import { toClientSettings } from "@/lib/server-settings";
 import { deleteLibraryCache } from "@/lib/library-cache";
+import { startBackgroundLibrarySync } from "@/lib/library-sync";
 
 export async function POST(request: NextRequest) {
   try {
@@ -33,11 +34,21 @@ export async function POST(request: NextRequest) {
       previous.plexToken !== merged.plexToken;
     const libraryPathChanged = previous.libraryPath !== merged.libraryPath;
 
-    if (plexUrlChanged || plexTokenChanged || libraryPathChanged) {
+    if (plexUrlChanged || libraryPathChanged) {
       deleteLibraryCache();
     }
 
     saveServerSettings(merged);
+
+    if (
+      (plexTokenChanged || plexUrlChanged || libraryPathChanged) &&
+      merged.plexUrl &&
+      merged.plexToken
+    ) {
+      void startBackgroundLibrarySync(merged, {
+        forceRefresh: plexUrlChanged || libraryPathChanged,
+      });
+    }
 
     const response = NextResponse.json({
       success: true,

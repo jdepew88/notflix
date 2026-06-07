@@ -1,10 +1,17 @@
-import { createHash } from "crypto";
-import fs from "fs";
-import path from "path";
 import type { MediaItem } from "./types";
 import type { ServerSettings } from "./server-settings";
-import { getDataPath } from "./data-path";
 import { resolveLibraryPath } from "./library-path";
+import {
+  readLibraryDatabase,
+  writeLibraryDatabase,
+  deleteLibraryDatabase,
+  databaseAsCache,
+  cacheDataToDatabase,
+  updateLibraryDatabaseHero,
+  hashPlexToken,
+} from "./library-store";
+
+export { hashPlexToken };
 
 export interface LibraryCacheData {
   version: 1;
@@ -25,35 +32,17 @@ export interface LibraryCacheData {
 
 const CACHE_VERSION = 1 as const;
 
-function cacheFilePath(): string {
-  return path.join(getDataPath(), "library-cache.json");
-}
-
 function normalizePlexUrl(url: string): string {
   return url.replace(/\/$/, "");
 }
 
-export function hashPlexToken(token: string): string {
-  return createHash("sha256").update(token).digest("hex").slice(0, 12);
-}
-
 export function readLibraryCache(): LibraryCacheData | null {
-  try {
-    const raw = fs.readFileSync(cacheFilePath(), "utf8");
-    const data = JSON.parse(raw) as LibraryCacheData;
-    if (data.version !== CACHE_VERSION || !Array.isArray(data.items)) return null;
-    return data;
-  } catch {
-    return null;
-  }
+  const db = readLibraryDatabase();
+  return db ? databaseAsCache(db) : null;
 }
 
 export function writeLibraryCache(data: LibraryCacheData): void {
-  const file = cacheFilePath();
-  const tmp = `${file}.tmp`;
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(tmp, JSON.stringify(data, null, 2), "utf8");
-  fs.renameSync(tmp, file);
+  writeLibraryDatabase(cacheDataToDatabase(data));
 }
 
 export function updateLibraryCacheHero(
@@ -61,22 +50,11 @@ export function updateLibraryCacheHero(
   heroPrimaryId: string | null,
   heroVideoError: string | null
 ): void {
-  const cache = readLibraryCache();
-  if (!cache) return;
-  writeLibraryCache({
-    ...cache,
-    featuredHeroId,
-    heroPrimaryId,
-    heroVideoError,
-  });
+  updateLibraryDatabaseHero(featuredHeroId, heroPrimaryId, heroVideoError);
 }
 
 export function deleteLibraryCache(): void {
-  try {
-    fs.unlinkSync(cacheFilePath());
-  } catch {
-    /* ignore */
-  }
+  deleteLibraryDatabase();
 }
 
 export function cacheMatchesSettings(

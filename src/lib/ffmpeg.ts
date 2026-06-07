@@ -294,6 +294,20 @@ export function trackResponseDefaults(probe: ProbeResult) {
 }
 
 export function defaultAudioTrack(audio: StreamTrack[]): number {
+  const englishAac = audio.find(
+    (a) => a.codec.toLowerCase() === "aac" && trackMatchesEnglish(a)
+  );
+  if (englishAac) return englishAac.index;
+
+  const englishTracks = audio.filter(trackMatchesEnglish);
+  if (englishTracks.length > 0) {
+    const browserOk = englishTracks.find((a) => BROWSER_AUDIO.has(a.codec.toLowerCase()));
+    if (browserOk) return browserOk.index;
+    const def = englishTracks.find((a) => a.default);
+    if (def) return def.index;
+    return englishTracks[0].index;
+  }
+
   const aac = audio.find((a) => a.codec.toLowerCase() === "aac");
   if (aac) return aac.index;
   const def = audio.find((a) => a.default);
@@ -446,6 +460,114 @@ export async function startHlsTranscode(
   const ready = await waitForFile(manifestPath);
   if (!ready) {
     throw new Error("Transcode timed out. Ensure ffmpeg is installed and in PATH.");
+  }
+
+  return { session, manifestPath };
+}
+
+/** Stream-copy remux for Debrid — no video/audio re-encoding. */
+export async function startHlsRemux(
+  input: string,
+  audioStreamIndex: number,
+  subtitleStreamIndex: number | null,
+  subtitleCodec?: string,
+  subtitlesForOrdinal: StreamTrack[] = []
+): Promise<{ session: string; manifestPath: string }> {
+  const session = sessionId(input, audioStreamIndex, subtitleStreamIndex ?? -1);
+  const outDir = cachePath(session);
+  const manifestPath = path.join(outDir, "master.m3u8");
+  const isRemote = /^https?:\/\//i.test(input);
+
+  try {
+    await fsPromises.access(manifestPath);
+    return { session, manifestPath };
+  } catch {
+    /* not cached */
+  }
+
+  if (subtitleStreamIndex !== null && subtitleCodec && !isTextSubtitleCodec(subtitleCodec)) {
+    throw new Error(
+      "Image-based subtitles cannot be remuxed for direct play. Choose a text subtitle track or turn subtitles off."
+    );
+  }
+
+  if (!activeJobs.has(session)) {
+    activeJobs.set(
+      session,
+      (async () => {
+        await fsPromises.mkdir(outDir, { recursive: true });
+
+        const inputArgs = isRemote
+          ? [
+              "-reconnect",
+              "1",
+              "-reconnect_streamed",
+              "1",
+              "-reconnect_delay_max",
+              "5",
+              "-user_agent",
+              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            ]
+          : [];
+
+        const subOrdinal =
+          subtitleStreamIndex !== null && subtitleStreamIndex >= 0
+            ? subtitleStreamOrdinal(subtitlesForOrdinal, subtitleStreamIndex)
+            : 0;
+
+        const args = [
+          ...inputArgs,
+          "-i",
+          input,
+          "-map",
+          "0:v:0",
+          "-map",
+          `0:${audioStreamIndex}`,
+          "-c:v",
+          "copy",
+          "-c:a",
+          "copy",
+        ];
+
+        if (subtitleStreamIndex !== null && subtitleStreamIndex >= 0) {
+          args.push("-map", `0:${subtitleStreamIndex}`, "-c:s", "webvtt");
+        }
+
+        args.push(
+          "-f",
+          "hls",
+          "-hls_time",
+          "6",
+          "-hls_list_size",
+          "0",
+          "-hls_flags",
+          "independent_segments+append_list",
+          "-hls_segment_filename",
+          path.join(outDir, "seg_%03d.ts"),
+          manifestPath
+        );
+
+        await new Promise<void>((resolve, reject) => {
+          const proc = spawn(getFfmpegPath(), args, { windowsHide: true });
+          let stderr = "";
+          proc.stderr.on("data", (d) => (stderr += d.toString()));
+          proc.on("error", (err) => reject(new Error(`ffmpeg not found: ${err.message}`)));
+          proc.on("close", (code) => {
+            activeJobs.delete(session);
+            if (code === 0 || code === 255) resolve();
+            else reject(new Error(stderr.slice(-500) || `ffmpeg remux exited ${code}`));
+          });
+        });
+      })().catch((err) => {
+        activeJobs.delete(session);
+        throw err;
+      })
+    );
+  }
+
+  const ready = await waitForFile(manifestPath, 60000);
+  if (!ready) {
+    throw new Error("Remux timed out. The stream may be slow to start — try again.");
   }
 
   return { session, manifestPath };
