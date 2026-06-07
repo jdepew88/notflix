@@ -416,6 +416,9 @@ export default function WatchPage() {
         onRequestTranscode={handleRequestTranscode}
         transcodeAvailable={transcodeAvailable}
         isDirectPlay={isDirectPlay}
+        plexToken={settings.plexToken}
+        plexRatingKey={plexRatingKey ?? undefined}
+        plexUrl={settings.plexUrl}
       />
     </div>
   );

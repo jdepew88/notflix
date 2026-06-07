@@ -63,13 +63,7 @@ function AppHydrator() {
 
 export function Providers({ children }: { children: React.ReactNode }) {
   useEffect(() => {
-    if (typeof window !== "undefined" && window.cast?.framework) {
-      const context = window.cast.framework.CastContext.getInstance();
-      context.setOptions({
-        receiverApplicationId: window.chrome.cast.media.DEFAULT_MEDIA_RECEIVER_APP_ID,
-        autoJoinPolicy: window.chrome.cast.AutoJoinPolicy.ORIGIN_SCOPED,
-      });
-    }
+    void import("@/lib/cast-init").then(({ initCastFramework }) => initCastFramework());
   }, []);
 
   return (

@@ -5,6 +5,11 @@ import {
   getPlexCredentials,
   rewriteHlsManifest,
 } from "@/lib/plex-stream";
+import { castCorsHeaders } from "@/lib/cast-cors";
+
+export async function OPTIONS() {
+  return new NextResponse(null, { status: 204, headers: castCorsHeaders() });
+}
 
 export async function GET(request: NextRequest) {
   const ratingKey = request.nextUrl.searchParams.get("ratingKey");
@@ -37,6 +42,7 @@ export async function GET(request: NextRequest) {
       headers: {
         "Content-Type": "application/vnd.apple.mpegurl",
         "Cache-Control": "no-cache",
+        ...castCorsHeaders(),
       },
     });
   } catch (err) {

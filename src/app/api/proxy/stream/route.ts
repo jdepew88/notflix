@@ -1,4 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
+import { castCorsHeaders } from "@/lib/cast-cors";
+
+export async function OPTIONS() {
+  return new NextResponse(null, { status: 204, headers: castCorsHeaders() });
+}
 
 export async function GET(request: NextRequest) {
   const url = request.nextUrl.searchParams.get("url");
@@ -29,6 +34,9 @@ export async function GET(request: NextRequest) {
     const contentRange = upstream.headers.get("Content-Range");
     if (contentLength) responseHeaders.set("Content-Length", contentLength);
     if (contentRange) responseHeaders.set("Content-Range", contentRange);
+    for (const [key, value] of Object.entries(castCorsHeaders())) {
+      responseHeaders.set(key, value);
+    }
 
     return new NextResponse(upstream.body, {
       status: upstream.status,

@@ -16,6 +16,11 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { useCast } from "@/hooks/useCast";
+import {
+  buildRemotePlaybackUrl,
+  isHlsSource,
+  isSafariBrowser,
+} from "@/lib/cast-media";
 import { TrackSelector } from "./TrackSelector";
 import type { StreamTrack } from "@/types/media-tracks";
 
@@ -35,6 +40,9 @@ interface VideoPlayerProps {
   onRequestTranscode?: () => void;
   transcodeAvailable?: boolean;
   isDirectPlay?: boolean;
+  plexToken?: string;
+  plexRatingKey?: string;
+  plexUrl?: string;
 }
 
 function formatTime(seconds: number): string {
@@ -61,6 +69,9 @@ export function VideoPlayer({
   onRequestTranscode,
   transcodeAvailable,
   isDirectPlay,
+  plexToken,
+  plexRatingKey,
+  plexUrl,
 }: VideoPlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -76,18 +87,27 @@ export function VideoPlayer({
   const [fullscreen, setFullscreen] = useState(false);
   const [buffering, setBuffering] = useState(false);
   const [playbackError, setPlaybackError] = useState<string | null>(null);
+  const [airPlayReady, setAirPlayReady] = useState(false);
+  const [remoteError, setRemoteError] = useState<string | null>(null);
 
-  const isHls =
-    src.includes(".m3u8") ||
-    src.includes("/api/plex/hls") ||
-    src.includes("/api/debrid/hls") ||
-    src.includes("master.m3u8");
+  const isHls = isHlsSource(src);
+  const useNativeHls =
+    isHls &&
+    (isSafariBrowser() ||
+      (typeof document !== "undefined" &&
+        document.createElement("video").canPlayType("application/vnd.apple.mpegurl") !== ""));
 
-  const { castAvailable, casting, startCast, stopCast } = useCast({
+  const playbackSrc = buildRemotePlaybackUrl(src, { plexToken });
+
+  const { castReady, casting, castError, startCast, stopCast, clearCastError } = useCast({
     title,
     src,
     poster,
     videoRef,
+    plexToken,
+    plexRatingKey,
+    plexUrl,
+    currentTime,
   });
 
   useEffect(() => {
@@ -98,9 +118,9 @@ export function VideoPlayer({
     const video = videoRef.current;
     if (!video) return;
 
-    if (isHls && Hls.isSupported()) {
+    if (isHls && !useNativeHls && Hls.isSupported()) {
       const hls = new Hls({ enableWorker: true, lowLatencyMode: false });
-      hls.loadSource(src);
+      hls.loadSource(playbackSrc);
       hls.attachMedia(video);
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
         if (hls.subtitleTracks.length > 0) {
@@ -127,12 +147,12 @@ export function VideoPlayer({
       };
     }
 
-    if (isHls && video.canPlayType("application/vnd.apple.mpegurl")) {
-      video.src = src;
-    } else {
-      video.src = src;
-    }
-  }, [src, isHls, subtitleIndex]);
+    video.src = playbackSrc;
+    return () => {
+      video.removeAttribute("src");
+      video.load();
+    };
+  }, [playbackSrc, isHls, useNativeHls, subtitleIndex]);
 
   useEffect(() => {
     const hls = hlsRef.current;
@@ -205,10 +225,39 @@ export function VideoPlayer({
     resetHideTimer();
   };
 
-  const handleAirPlay = () => {
-    const video = videoRef.current as HTMLVideoElement & { webkitShowPlaybackTargetPicker?: () => void };
-    video?.webkitShowPlaybackTargetPicker?.();
+  const handleAirPlay = async () => {
+    setRemoteError(null);
+    const video = videoRef.current as HTMLVideoElement & {
+      webkitShowPlaybackTargetPicker?: () => void;
+      webkitCurrentPlaybackTargetIsWireless?: boolean;
+    };
+    if (!video) return;
+
+    if (typeof video.webkitShowPlaybackTargetPicker !== "function") {
+      setRemoteError("AirPlay is available in Safari on Apple devices.");
+      return;
+    }
+
+    try {
+      if (hlsRef.current) {
+        hlsRef.current.destroy();
+        hlsRef.current = null;
+        video.src = playbackSrc;
+        video.load();
+        await video.play().catch(() => undefined);
+      }
+      video.webkitShowPlaybackTargetPicker();
+    } catch {
+      setRemoteError("Could not open AirPlay picker.");
+    }
   };
+
+  useEffect(() => {
+    const video = videoRef.current as HTMLVideoElement & {
+      webkitShowPlaybackTargetPicker?: () => void;
+    };
+    setAirPlayReady(typeof video?.webkitShowPlaybackTargetPicker === "function");
+  }, [src]);
 
   const progressPct = duration > 0 ? (currentTime / duration) * 100 : 0;
 
@@ -224,6 +273,7 @@ export function VideoPlayer({
         className="h-full w-full"
         poster={poster}
         playsInline
+        disableRemotePlayback={false}
         // AirPlay 2 support (Safari / iOS / macOS)
         {...({ "x-webkit-airplay": "allow", airplay: "allow" } as React.VideoHTMLAttributes<HTMLVideoElement>)}
         onClick={togglePlay}
@@ -370,7 +420,7 @@ export function VideoPlayer({
                 </button>
               )}
 
-              {/* AirPlay 2 */}
+              {airPlayReady && (
               <button
                 type="button"
                 onClick={handleAirPlay}
@@ -379,27 +429,35 @@ export function VideoPlayer({
               >
                 <Airplay className="h-5 w-5" />
               </button>
-
-              {/* Chromecast */}
-              {castAvailable && (
-                <button
-                  type="button"
-                  onClick={casting ? stopCast : startCast}
-                  className={cn(
-                    "text-white hover:text-netflix-light-gray",
-                    casting && "text-netflix-red"
-                  )}
-                  title="Cast"
-                >
-                  <Cast className="h-5 w-5" />
-                </button>
               )}
+
+              <button
+                type="button"
+                onClick={() => {
+                  clearCastError();
+                  if (casting) stopCast();
+                  else void startCast();
+                }}
+                disabled={!castReady}
+                className={cn(
+                  "text-white hover:text-netflix-light-gray disabled:opacity-40",
+                  casting && "text-netflix-red"
+                )}
+                title={castReady ? "Cast to Chromecast" : "Chromecast loading…"}
+              >
+                <Cast className="h-5 w-5" />
+              </button>
 
               <button type="button" onClick={toggleFullscreen} className="text-white hover:text-netflix-light-gray">
                 {fullscreen ? <Minimize className="h-5 w-5" /> : <Maximize className="h-5 w-5" />}
               </button>
             </div>
           </div>
+          {(castError || remoteError) && (
+            <p className="mt-2 text-xs text-yellow-300">
+              {castError || remoteError}
+            </p>
+          )}
         </div>
       </div>
     </div>

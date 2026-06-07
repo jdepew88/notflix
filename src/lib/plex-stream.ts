@@ -22,7 +22,7 @@ export function getPlexCredentials(request?: NextRequest) {
 
   return {
     plexUrl: normalizePlexUrl(qp?.get("plexUrl") || merged.plexUrl || ""),
-    token: qp?.get("token") || merged.plexToken || "",
+    token: qp?.get("token") || qp?.get("X-Plex-Token") || merged.plexToken || "",
   };
 }
 
@@ -87,6 +87,11 @@ export function rewriteHlsManifest(
   plexUrl: string,
   token: string
 ): string {
+  const tokenSuffix = `&token=${encodeURIComponent(token)}`;
+
+  const proxyPath = (path: string) =>
+    path.includes("?") ? `${path}${tokenSuffix}` : `${path}?token=${encodeURIComponent(token)}`;
+
   return manifest
     .split("\n")
     .map((line) => {
@@ -96,9 +101,9 @@ export function rewriteHlsManifest(
         return line.replace(/URI="([^"]+)"/g, (_match, uri: string) => {
           const absolute = resolvePlexUrl(plexUrl, uri);
           if (uri.includes(".m3u8") || absolute.includes(".m3u8")) {
-            return `URI="/api/plex/hls?manifest=${encodeURIComponent(absolute)}"`;
+            return `URI="${proxyPath(`/api/plex/hls?manifest=${encodeURIComponent(absolute)}`)}"`;
           }
-          return `URI="/api/plex/segment?url=${encodeURIComponent(absolute)}"`;
+          return `URI="${proxyPath(`/api/plex/segment?url=${encodeURIComponent(absolute)}`)}"`;
         });
       }
 
@@ -106,9 +111,9 @@ export function rewriteHlsManifest(
 
       const absolute = resolvePlexUrl(plexUrl, trimmed);
       if (trimmed.endsWith(".m3u8") || absolute.includes(".m3u8")) {
-        return `/api/plex/hls?manifest=${encodeURIComponent(absolute)}`;
+        return proxyPath(`/api/plex/hls?manifest=${encodeURIComponent(absolute)}`);
       }
-      return `/api/plex/segment?url=${encodeURIComponent(absolute)}`;
+      return proxyPath(`/api/plex/segment?url=${encodeURIComponent(absolute)}`);
     })
     .join("\n");
 }

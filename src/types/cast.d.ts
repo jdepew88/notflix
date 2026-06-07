@@ -10,10 +10,15 @@ declare global {
       namespace media {
         const DEFAULT_MEDIA_RECEIVER_APP_ID: string;
 
+        enum StreamType {
+          BUFFERED = "BUFFERED",
+          LIVE = "LIVE",
+        }
+
         class MediaInfo {
           constructor(src: string, contentType: string);
           metadata: GenericMediaMetadata;
-          streamType?: string;
+          streamType?: StreamType;
         }
 
         class GenericMediaMetadata {
@@ -23,6 +28,7 @@ declare global {
 
         class LoadRequest {
           constructor(mediaInfo: MediaInfo);
+          currentTime?: number;
         }
       }
     }
