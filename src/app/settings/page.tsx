@@ -29,6 +29,7 @@ export default function SettingsPage() {
   const [plexNeedsSignIn, setPlexNeedsSignIn] = useState(false);
   const plexPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const plexPollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const plexPollCompleteRef = useRef(false);
 
   useEffect(() => {
     return () => {
@@ -126,6 +127,7 @@ export default function SettingsPage() {
 
   const signInWithPlex = async () => {
     stopPlexPoll();
+    plexPollCompleteRef.current = false;
     setPlexSigningIn(true);
     setPlexServer("");
     setPlexNeedsSignIn(false);
@@ -137,15 +139,29 @@ export default function SettingsPage() {
       window.open(data.authUrl, "plex-auth", "width=520,height=720");
 
       plexPollRef.current = setInterval(async () => {
+        if (plexPollCompleteRef.current) return;
         try {
-          const pollRes = await fetch(`/api/plex/auth/pin?pinId=${encodeURIComponent(data.pinId)}`);
+          const pollRes = await fetch(
+            `/api/plex/auth/pin?pinId=${encodeURIComponent(data.pinId)}&clientId=${encodeURIComponent(data.clientId)}`
+          );
           const pollData = await pollRes.json();
+
+          if (pollRes.status === 410 || pollData.status === "expired") {
+            if (plexPollCompleteRef.current) return;
+            stopPlexPoll();
+            setPlexStatus("error");
+            setPlexServer("Plex sign-in expired. Click Sign in with Plex again.");
+            return;
+          }
+
           if (!pollRes.ok) throw new Error(pollData.error || "Plex sign-in failed");
           if (pollData.status !== "authorized") return;
 
+          plexPollCompleteRef.current = true;
           stopPlexPoll();
           await applyPlexAuth(pollData);
         } catch (err) {
+          if (plexPollCompleteRef.current) return;
           stopPlexPoll();
           setPlexStatus("error");
           setPlexServer(err instanceof Error ? err.message : "Plex sign-in failed");
@@ -153,6 +169,7 @@ export default function SettingsPage() {
       }, 2000);
 
       plexPollTimeoutRef.current = setTimeout(() => {
+        if (plexPollCompleteRef.current) return;
         stopPlexPoll();
         setPlexStatus("error");
         setPlexServer("Plex sign-in timed out. Try again.");

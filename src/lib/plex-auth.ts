@@ -3,6 +3,7 @@ import fs from "fs";
 import path from "path";
 
 const PLEX_TV = "https://plex.tv/api/v2";
+const PLEX_PRODUCT = "Notflix";
 
 export interface PlexPinResult {
   id: number;
@@ -51,7 +52,7 @@ export function getPlexClientIdentifier(): string {
 function plexTvHeaders(clientId: string, token?: string): Record<string, string> {
   const headers: Record<string, string> = {
     Accept: "application/json",
-    "X-Plex-Product": "Notflix",
+    "X-Plex-Product": PLEX_PRODUCT,
     "X-Plex-Version": "1.0",
     "X-Plex-Client-Identifier": clientId,
     "X-Plex-Platform": "Web",
@@ -64,16 +65,26 @@ export function buildPlexAuthUrl(clientId: string, code: string): string {
   const params = new URLSearchParams({
     clientID: clientId,
     code,
-    "context[device][product]": "Notflix",
+    "context[device][product]": PLEX_PRODUCT,
     "context[device][platform]": "Web",
   });
   return `https://app.plex.tv/auth/#?${params.toString()}`;
 }
 
 export async function createPlexPin(clientId: string): Promise<PlexPinResult> {
-  const res = await fetch(`${PLEX_TV}/pins?strong=true`, {
+  const body = new URLSearchParams({
+    strong: "true",
+    "X-Plex-Product": PLEX_PRODUCT,
+    "X-Plex-Client-Identifier": clientId,
+  });
+
+  const res = await fetch(`${PLEX_TV}/pins`, {
     method: "POST",
-    headers: plexTvHeaders(clientId),
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body,
     cache: "no-store",
   });
 
@@ -89,11 +100,22 @@ export async function createPlexPin(clientId: string): Promise<PlexPinResult> {
   return data;
 }
 
-export async function checkPlexPin(pinId: string, clientId: string): Promise<PlexPinResult> {
-  const res = await fetch(`${PLEX_TV}/pins/${encodeURIComponent(pinId)}`, {
+export async function checkPlexPin(
+  pinId: string,
+  clientId: string,
+  pinCode: string
+): Promise<PlexPinResult | null> {
+  const query = new URLSearchParams({
+    code: pinCode,
+    "X-Plex-Client-Identifier": clientId,
+  });
+
+  const res = await fetch(`${PLEX_TV}/pins/${encodeURIComponent(pinId)}?${query}`, {
     headers: plexTvHeaders(clientId),
     cache: "no-store",
   });
+
+  if (res.status === 404) return null;
 
   if (!res.ok) {
     const text = await res.text().catch(() => "");
