@@ -13,8 +13,10 @@ services:
       HOSTNAME: 0.0.0.0
       PLEX_URL: http://10.10.0.8:32800
       LIBRARY_PATH: /media
+      DATA_PATH: /app/data
     volumes:
       - /mnt/user/Media:/media:ro
+      - /mnt/user/appdata/notflix/data:/app/data
     # Uncomment for Traefik (adjust network/labels to match your stack):
     # networks:
     #   - traefik

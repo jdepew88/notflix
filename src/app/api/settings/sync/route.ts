@@ -1,60 +1,34 @@
 import { NextRequest, NextResponse } from "next/server";
 import { testPlexConnection } from "@/lib/plex";
 import { testTvdbConnection } from "@/lib/tvdb";
-import { mergeSettings } from "@/lib/settings";
+import {
+  applySettingsCookies,
+  mergeSettings,
+  mergeSettingsFromBody,
+  saveServerSettings,
+} from "@/lib/settings";
+import { toClientSettings } from "@/lib/server-settings";
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const settings = mergeSettings(request);
+    const merged = mergeSettingsFromBody(request, {
+      realDebridToken: body.realDebridToken,
+      tmdbApiKey: body.tmdbApiKey,
+      tvdbApiKey: body.tvdbApiKey,
+      libraryPath: body.libraryPath,
+      plexUrl: body.plexUrl,
+      plexToken: body.plexToken,
+      directPlay: body.directPlay,
+    });
 
-    const plexUrl = body.plexUrl || settings.plexUrl;
-    const plexToken = body.plexToken || settings.plexToken;
-    const tvdbApiKey = body.tvdbApiKey || settings.tvdbApiKey;
+    saveServerSettings(merged);
 
-    const response = NextResponse.json({ success: true });
-
-    if (plexUrl) {
-      response.cookies.set("plex_url", plexUrl, {
-        path: "/",
-        maxAge: 60 * 60 * 24 * 365,
-        sameSite: "lax",
-        httpOnly: true,
-      });
-    }
-    if (plexToken) {
-      response.cookies.set("plex_token", plexToken, {
-        path: "/",
-        maxAge: 60 * 60 * 24 * 365,
-        sameSite: "lax",
-        httpOnly: true,
-      });
-    }
-    if (body.libraryPath) {
-      response.cookies.set("library_path", body.libraryPath, {
-        path: "/",
-        maxAge: 60 * 60 * 24 * 365,
-        sameSite: "lax",
-        httpOnly: true,
-      });
-    }
-    if (body.tmdbApiKey) {
-      response.cookies.set("tmdb_key", body.tmdbApiKey, {
-        path: "/",
-        maxAge: 60 * 60 * 24 * 365,
-        sameSite: "lax",
-        httpOnly: true,
-      });
-    }
-    if (tvdbApiKey) {
-      response.cookies.set("tvdb_key", tvdbApiKey, {
-        path: "/",
-        maxAge: 60 * 60 * 24 * 365,
-        sameSite: "lax",
-        httpOnly: true,
-      });
-    }
-
+    const response = NextResponse.json({
+      success: true,
+      settings: toClientSettings(merged),
+    });
+    applySettingsCookies(response, merged);
     return response;
   } catch (err) {
     const message = err instanceof Error ? err.message : "Sync failed";
@@ -65,6 +39,7 @@ export async function POST(request: NextRequest) {
 export async function GET(request: NextRequest) {
   const settings = mergeSettings(request);
   const test = request.nextUrl.searchParams.get("test");
+  const config = request.nextUrl.searchParams.get("config");
 
   if (test === "plex") {
     if (!settings.plexUrl || !settings.plexToken) {
@@ -82,12 +57,28 @@ export async function GET(request: NextRequest) {
     return NextResponse.json(result);
   }
 
+  if (config === "1") {
+    const response = NextResponse.json({
+      settings: toClientSettings(settings),
+      configured: {
+        plex: !!(settings.plexUrl && settings.plexToken),
+        nfs: !!settings.libraryPath,
+        tmdb: !!settings.tmdbApiKey,
+        tvdb: !!settings.tvdbApiKey,
+        debrid: !!settings.realDebridToken,
+      },
+    });
+    applySettingsCookies(response, settings);
+    return response;
+  }
+
   return NextResponse.json({
     configured: {
       plex: !!(settings.plexUrl && settings.plexToken),
       nfs: !!settings.libraryPath,
       tmdb: !!settings.tmdbApiKey,
       tvdb: !!settings.tvdbApiKey,
+      debrid: !!settings.realDebridToken,
     },
   });
 }

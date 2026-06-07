@@ -21,6 +21,8 @@
 /build
 
 /.cache/
+/.data/
+/data/
 *.pem
 
 # debug

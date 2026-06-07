@@ -58,32 +58,39 @@ Required in `.env`:
 PLEX_URL=http://10.10.0.8:32800
 PLEX_TOKEN=your_plex_token_here
 LIBRARY_PATH=/media
+DATA_PATH=/app/data
 NEXT_PUBLIC_APP_URL=http://10.10.0.8:3233
+REAL_DEBRID_TOKEN=your_token_if_using_debrid
+TMDB_API_KEY=your_key_if_using_tmdb
 ```
 
 Get your Plex token: [Plex support docs](https://support.plex.tv/articles/204059436-finding-an-authentication-token-x-plex-token/) or Plex Web → any item → Get Info → View XML (token is in the URL).
 
-### 3. Build and run with Podman Compose
+### 3. Build and run (Docker — no compose)
 
 ```bash
-podman-compose -f compose.yaml up -d --build
-```
+mkdir -p /mnt/user/appdata/notflix/data
 
-Or manually:
+docker build -t notflix .
 
-```bash
-podman build -t notflix .
-podman run -d \
+docker rm -f notflix 2>/dev/null
+
+docker run -d \
   --name notflix \
   --restart unless-stopped \
   -p 3233:3000 \
-  --env-file .env \
+  --env-file /mnt/user/appdata/notflix/.env \
   -e NODE_ENV=production \
-  -e PLEX_URL=http://10.10.0.8:32800 \
-  -e LIBRARY_PATH=/media \
+  -e HOSTNAME=0.0.0.0 \
+  -e DATA_PATH=/app/data \
   -v /mnt/user/Media:/media:ro \
+  -v /mnt/user/appdata/notflix/data:/app/data \
   notflix
 ```
+
+Settings load from `.env` on start and persist to `/mnt/user/appdata/notflix/data/settings.json`.
+
+**Optional:** `compose.yaml` is included if you prefer Compose Manager later.
 
 ### 4. Test
 
@@ -104,8 +111,22 @@ podman logs notflix
 ```bash
 cd /mnt/user/appdata/notflix
 git pull
-podman-compose -f compose.yaml up -d --build
+docker build -t notflix .
+docker rm -f notflix
+docker run -d \
+  --name notflix \
+  --restart unless-stopped \
+  -p 3233:3000 \
+  --env-file /mnt/user/appdata/notflix/.env \
+  -e NODE_ENV=production \
+  -e HOSTNAME=0.0.0.0 \
+  -e DATA_PATH=/app/data \
+  -v /mnt/user/Media:/media:ro \
+  -v /mnt/user/appdata/notflix/data:/app/data \
+  notflix
 ```
+
+**Env-only change** (no code update): `docker restart notflix`
 
 ---
 
@@ -143,6 +164,8 @@ When Traefik handles HTTPS, you can remove the host port mapping or keep `3233:3
 | Internal port | `3000` |
 | Host port | `3233` |
 | Media mount | `/mnt/user/Media` → `/media:ro` |
+| Settings/data | `/mnt/user/appdata/notflix/data` → `/app/data` |
+| `DATA_PATH` | `/app/data` (persistent `settings.json`) |
 | `LIBRARY_PATH` | `/media` |
 | `PLEX_URL` | `http://10.10.0.8:32800` |
 | `PLEX_TOKEN` | From `.env` only |

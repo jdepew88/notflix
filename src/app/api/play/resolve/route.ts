@@ -35,7 +35,7 @@ export async function GET(request: NextRequest) {
     year,
     plexUrl: settings.plexUrl,
     plexToken: settings.plexToken,
-    torrentioUrl: getTorrentioUrl() || undefined,
+    torrentioUrl: settings.torrentioUrl || getTorrentioUrl() || undefined,
     realDebridToken: settings.realDebridToken || getRealDebridToken() || undefined,
     tmdbApiKey: settings.tmdbApiKey || getTmdbApiKey() || undefined,
   });

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { ArrowLeft, Check, X, RefreshCw } from "lucide-react";
 import { useAppStore } from "@/lib/store";
@@ -18,12 +18,24 @@ export default function SettingsPage() {
   const [plexServer, setPlexServer] = useState("");
   const [tvdbStatus, setTvdbStatus] = useState<"idle" | "checking" | "ok" | "error">("idle");
 
+  useEffect(() => {
+    setForm(settings);
+  }, [settings]);
+
   const saveAndSync = async () => {
     updateSettings(form);
     setSyncing(true);
     setSyncResult("");
     try {
       await syncSettingsToServer(form);
+      const configRes = await fetch("/api/settings/sync?config=1", { credentials: "same-origin" });
+      if (configRes.ok) {
+        const configData = await configRes.json();
+        if (configData.settings) {
+          updateSettings(configData.settings);
+          setForm(configData.settings);
+        }
+      }
       const libRes = await fetchWithSettings("/api/library", form);
       const libData = libRes.ok ? await libRes.json() : null;
       setSaved(true);
@@ -97,8 +109,9 @@ export default function SettingsPage() {
 
       <h1 className="mb-2 text-3xl font-semibold">Settings</h1>
       <p className="mb-8 text-netflix-light-gray">
-        Configure Plex to pull your library. TVDB enriches posters and metadata for TV shows.
-        Click <strong className="text-white">Save & Sync Library</strong> after saving.
+        Configure Plex to pull your library. Settings are loaded from server <code className="text-white">.env</code>{" "}
+        and saved to persistent storage — they survive container reboots. Click{" "}
+        <strong className="text-white">Save & Sync Library</strong> after editing.
       </p>
 
       <div className="mx-auto max-w-2xl space-y-8">
