@@ -10,6 +10,7 @@ import {
   saveServerSettings,
   type ServerSettings,
 } from "./server-settings";
+import { mapHostPathToContainer } from "./library-path";
 
 export type { ServerSettings as ResolvedSettings };
 
@@ -26,7 +27,13 @@ export function mergeSettingsFromBody(
   body: Partial<ServerSettings>
 ): ServerSettings {
   const current = mergeSettings(request);
-  return mergeAllSettings(current, body);
+  const normalized = {
+    ...body,
+    libraryPath: body.libraryPath
+      ? mapHostPathToContainer(body.libraryPath)
+      : body.libraryPath,
+  };
+  return mergeAllSettings(current, normalized);
 }
 
 export { applySettingsCookies, saveServerSettings, getServerSettingsSync };

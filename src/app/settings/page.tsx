@@ -5,7 +5,7 @@ import Link from "next/link";
 import { ArrowLeft, Check, X, RefreshCw } from "lucide-react";
 import { useAppStore } from "@/lib/store";
 import { syncSettingsToServer, fetchWithSettings } from "@/lib/client-settings";
-import { CONTAINER_VIDEO_PATH, HOST_VIDEO_PATH } from "@/lib/library-path";
+import { CONTAINER_MEDIA_PATH, CONTAINER_VIDEO_PATH, HOST_MEDIA_PATH, mapHostPathToContainer } from "@/lib/library-path";
 import { isPlexUnauthorizedMessage } from "@/lib/plex-auth-client";
 import { cn } from "@/lib/cn";
 
@@ -42,11 +42,16 @@ export default function SettingsPage() {
   }, [settings]);
 
   const saveAndSync = async () => {
-    updateSettings(form);
+    const normalizedForm = {
+      ...form,
+      libraryPath: form.libraryPath ? mapHostPathToContainer(form.libraryPath) : form.libraryPath,
+    };
+    updateSettings(normalizedForm);
+    setForm(normalizedForm);
     setSyncing(true);
     setSyncResult("");
     try {
-      await syncSettingsToServer(form);
+      await syncSettingsToServer(normalizedForm);
       const configRes = await fetch("/api/settings/sync?config=1", { credentials: "same-origin" });
       if (configRes.ok) {
         const configData = await configRes.json();
@@ -55,7 +60,7 @@ export default function SettingsPage() {
           setForm(configData.settings);
         }
       }
-      const libRes = await fetchWithSettings("/api/library", form);
+      const libRes = await fetchWithSettings("/api/library", normalizedForm);
       const libData = libRes.ok ? await libRes.json() : null;
       setSaved(true);
       if (libData?.count) {
@@ -191,6 +196,22 @@ export default function SettingsPage() {
     }
   };
 
+  const formatLibraryDiagnostic = (data: {
+    message?: string;
+    error?: string;
+    hint?: string;
+    suggestions?: string[];
+    availableSubdirs?: string[];
+  }) => {
+    const parts = [data.message ?? data.error ?? ""];
+    if (data.hint) parts.push(data.hint);
+    if (data.suggestions?.length) parts.push(`Existing paths: ${data.suggestions.join(", ")}`);
+    if (data.availableSubdirs?.length) {
+      parts.push(`Folders under /media: ${data.availableSubdirs.join(", ")}`);
+    }
+    return parts.filter(Boolean).join(" · ");
+  };
+
   const testLibraryPath = async () => {
     setLibraryStatus("checking");
     setLibraryMessage("");
@@ -198,8 +219,7 @@ export default function SettingsPage() {
       const res = await fetchWithSettings("/api/settings/diagnostics?action=library", form);
       const data = await res.json();
       setLibraryStatus(data.ok ? "ok" : "error");
-      const hint = data.hostHint ? ` (host: ${data.hostHint})` : "";
-      setLibraryMessage((data.message ?? data.error ?? "") + hint);
+      setLibraryMessage(formatLibraryDiagnostic(data));
     } catch {
       setLibraryStatus("error");
       setLibraryMessage("Diagnostics request failed");
@@ -216,10 +236,7 @@ export default function SettingsPage() {
       );
       const data = await res.json();
       setLibraryStatus(data.ok ? "ok" : "error");
-      const hint = data.hostHint
-        ? ` Host path: ${data.hostHint}`
-        : "";
-      setLibraryMessage((data.message ?? data.error ?? "") + hint);
+      setLibraryMessage(formatLibraryDiagnostic(data));
     } catch {
       setLibraryStatus("error");
       setLibraryMessage("Video folder test failed");
@@ -303,9 +320,12 @@ export default function SettingsPage() {
           <h2 className="mb-4 text-xl font-semibold">Diagnostics</h2>
           <p className="mb-4 text-sm text-netflix-light-gray">
             Test Plex connectivity and verify the video folder is readable inside the container.
-            Mount <code className="text-white">{HOST_VIDEO_PATH}</code> as{" "}
-            <code className="text-white">{CONTAINER_VIDEO_PATH}</code> in Docker (
+            Mount host share <code className="text-white">{HOST_MEDIA_PATH}</code> to{" "}
+            <code className="text-white">{CONTAINER_MEDIA_PATH}</code> in Docker (
             <code className="text-white">-v /mnt/user/Media:/media:ro</code>).
+            Use a path inside the container here — usually{" "}
+            <code className="text-white">{CONTAINER_VIDEO_PATH}</code> or{" "}
+            <code className="text-white">{CONTAINER_MEDIA_PATH}</code>.
           </p>
           <div className="flex flex-wrap gap-3">
             <button
@@ -476,9 +496,11 @@ export default function SettingsPage() {
           <h2 className="mb-4 text-xl font-semibold">Video library folder</h2>
           <p className="mb-4 text-sm text-netflix-light-gray">
             Path inside the container. On unRAID, mount{" "}
-            <code className="text-white">{HOST_VIDEO_PATH}</code> via{" "}
+            <code className="text-white">{HOST_MEDIA_PATH}</code> to{" "}
+            <code className="text-white">{CONTAINER_MEDIA_PATH}</code> via{" "}
             <code className="text-white">-v /mnt/user/Media:/media:ro</code>, then use{" "}
-            <code className="text-white">{CONTAINER_VIDEO_PATH}</code> here.
+            <code className="text-white">{CONTAINER_VIDEO_PATH}</code> or{" "}
+            <code className="text-white">{CONTAINER_MEDIA_PATH}</code> here.
           </p>
           <input
             type="text"

@@ -1,5 +1,7 @@
 /** Server-side environment helpers with production defaults. */
 
+import { mapHostPathToContainer } from "./library-path";
+
 export function getPort(): number {
   const raw = process.env.PORT?.trim();
   const parsed = raw ? parseInt(raw, 10) : 3000;
@@ -8,7 +10,7 @@ export function getPort(): number {
 
 export function getLibraryPath(): string {
   const fromEnv = process.env.LIBRARY_PATH?.trim();
-  if (fromEnv) return fromEnv;
+  if (fromEnv) return mapHostPathToContainer(fromEnv);
   return process.env.NODE_ENV === "production" ? "/media/Video" : "";
 }
 
