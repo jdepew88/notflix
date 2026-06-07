@@ -121,6 +121,32 @@ function metadataToItem(
   };
 }
 
+export async function refreshPlexLibraries(
+  plexUrl: string,
+  token: string
+): Promise<{ sections: number; names: string[] }> {
+  const sections = await plexGet<PlexMediaContainer>(
+    plexUrl,
+    token,
+    "/library/sections"
+  );
+  const directories = sections.MediaContainer?.Directory ?? [];
+  const names: string[] = [];
+  let count = 0;
+
+  for (const section of directories) {
+    if (!["movie", "show"].includes(section.type)) continue;
+    const url = `${normalizePlexUrl(plexUrl)}/library/sections/${section.key}/refresh?X-Plex-Token=${token}`;
+    const res = await fetch(url, { headers: { Accept: "application/json" } });
+    if (res.ok) {
+      count++;
+      names.push(section.title);
+    }
+  }
+
+  return { sections: count, names };
+}
+
 export async function fetchPlexLibrary(
   plexUrl: string,
   token: string

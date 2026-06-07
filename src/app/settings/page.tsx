@@ -5,6 +5,7 @@ import Link from "next/link";
 import { ArrowLeft, Check, X, RefreshCw } from "lucide-react";
 import { useAppStore } from "@/lib/store";
 import { syncSettingsToServer, fetchWithSettings } from "@/lib/client-settings";
+import { cn } from "@/lib/cn";
 
 export default function SettingsPage() {
   const settings = useAppStore((s) => s.settings);
@@ -17,6 +18,10 @@ export default function SettingsPage() {
   const [plexStatus, setPlexStatus] = useState<"idle" | "checking" | "ok" | "error">("idle");
   const [plexServer, setPlexServer] = useState("");
   const [tvdbStatus, setTvdbStatus] = useState<"idle" | "checking" | "ok" | "error">("idle");
+  const [libraryStatus, setLibraryStatus] = useState<"idle" | "checking" | "ok" | "error">("idle");
+  const [libraryMessage, setLibraryMessage] = useState("");
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshResult, setRefreshResult] = useState("");
 
   useEffect(() => {
     setForm(settings);
@@ -100,6 +105,56 @@ export default function SettingsPage() {
     }
   };
 
+  const testLibraryPath = async () => {
+    setLibraryStatus("checking");
+    setLibraryMessage("");
+    try {
+      const res = await fetchWithSettings("/api/settings/diagnostics?action=library", form);
+      const data = await res.json();
+      setLibraryStatus(data.ok ? "ok" : "error");
+      setLibraryMessage(data.message ?? data.error ?? "");
+    } catch {
+      setLibraryStatus("error");
+      setLibraryMessage("Diagnostics request failed");
+    }
+  };
+
+  const testPlexDiagnostics = async () => {
+    setPlexStatus("checking");
+    setPlexServer("");
+    try {
+      const res = await fetchWithSettings("/api/settings/diagnostics?action=plex", form);
+      const data = await res.json();
+      if (data.ok) {
+        setPlexStatus("ok");
+        setPlexServer(data.message ?? "Connected");
+      } else {
+        setPlexStatus("error");
+        setPlexServer(data.error ?? "Failed");
+      }
+    } catch {
+      setPlexStatus("error");
+    }
+  };
+
+  const forceRefreshPlex = async () => {
+    setRefreshing(true);
+    setRefreshResult("");
+    try {
+      const res = await fetchWithSettings("/api/library/refresh", form, { method: "POST" });
+      const data = await res.json();
+      if (data.success) {
+        setRefreshResult(data.message ?? `Refreshed ${data.titleCount} titles`);
+      } else {
+        setRefreshResult(data.error ?? "Refresh failed");
+      }
+    } catch {
+      setRefreshResult("Refresh request failed");
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-netflix-black px-4 py-8 md:px-12 lg:px-16">
       <Link href="/browse" className="mb-8 inline-flex items-center gap-2 text-sm hover:underline">
@@ -115,6 +170,78 @@ export default function SettingsPage() {
       </p>
 
       <div className="mx-auto max-w-2xl space-y-8">
+        <section className="rounded bg-netflix-dark p-6">
+          <h2 className="mb-4 text-xl font-semibold">Content source</h2>
+          <p className="mb-4 text-sm text-netflix-light-gray">
+            Plex-only mode shows titles from your Plex library only — no TMDB filler rows or
+            Real-Debrid fallback. Recommended for a pure home-theater experience.
+          </p>
+          <label className="flex cursor-pointer items-center gap-3">
+            <input
+              type="checkbox"
+              checked={form.plexOnly ?? true}
+              onChange={(e) => setForm({ ...form, plexOnly: e.target.checked })}
+              className="h-4 w-4 rounded accent-netflix-red"
+            />
+            <span className="text-sm">Plex library only (hide TMDB &amp; Debrid)</span>
+          </label>
+        </section>
+
+        <section className="rounded bg-netflix-dark p-6">
+          <h2 className="mb-4 text-xl font-semibold">Diagnostics</h2>
+          <p className="mb-4 text-sm text-netflix-light-gray">
+            Verify Plex is reachable and the mounted media folder is readable inside the container.
+          </p>
+          <div className="flex flex-wrap gap-3">
+            <button
+              type="button"
+              onClick={testPlexDiagnostics}
+              className="rounded border border-white/30 px-4 py-2 text-sm hover:bg-white/10"
+            >
+              Test Plex server
+              {plexStatus === "ok" && <Check className="ml-1 inline h-4 w-4 text-green-400" />}
+              {plexStatus === "error" && <X className="ml-1 inline h-4 w-4 text-red-400" />}
+            </button>
+            <button
+              type="button"
+              onClick={testLibraryPath}
+              className="rounded border border-white/30 px-4 py-2 text-sm hover:bg-white/10"
+            >
+              Test media folder
+              {libraryStatus === "ok" && <Check className="ml-1 inline h-4 w-4 text-green-400" />}
+              {libraryStatus === "error" && <X className="ml-1 inline h-4 w-4 text-red-400" />}
+            </button>
+            <button
+              type="button"
+              onClick={forceRefreshPlex}
+              disabled={refreshing}
+              className="flex items-center gap-2 rounded border border-white/30 px-4 py-2 text-sm hover:bg-white/10 disabled:opacity-50"
+            >
+              <RefreshCw className={cn("h-4 w-4", refreshing && "animate-spin")} />
+              Force refresh Plex
+            </button>
+          </div>
+          {plexServer && plexStatus === "ok" && (
+            <p className="mt-3 text-sm text-green-400">{plexServer}</p>
+          )}
+          {plexServer && plexStatus === "error" && (
+            <p className="mt-3 text-sm text-red-400">{plexServer}</p>
+          )}
+          {libraryMessage && (
+            <p
+              className={cn(
+                "mt-3 text-sm",
+                libraryStatus === "ok" ? "text-green-400" : "text-red-400"
+              )}
+            >
+              {libraryMessage}
+            </p>
+          )}
+          {refreshResult && (
+            <p className="mt-3 text-sm text-netflix-light-gray">{refreshResult}</p>
+          )}
+        </section>
+
         <section className="rounded bg-netflix-dark p-6">
           <h2 className="mb-4 text-xl font-semibold">Plex Server</h2>
           <p className="mb-4 text-sm text-netflix-light-gray">
@@ -205,6 +332,7 @@ export default function SettingsPage() {
           />
         </section>
 
+        {!form.plexOnly && (
         <section className="rounded bg-netflix-dark p-6">
           <h2 className="mb-4 text-xl font-semibold">Real-Debrid + Torrentio</h2>
           <p className="mb-4 text-sm text-netflix-light-gray">
@@ -233,6 +361,7 @@ export default function SettingsPage() {
             {debridStatus === "error" && <X className="ml-1 inline h-4 w-4 text-red-400" />}
           </button>
         </section>
+        )}
 
         <section className="rounded bg-netflix-dark p-6">
           <h2 className="mb-4 text-xl font-semibold">Playback</h2>
@@ -252,6 +381,7 @@ export default function SettingsPage() {
           </label>
         </section>
 
+        {!form.plexOnly && (
         <section className="rounded bg-netflix-dark p-6">
           <h2 className="mb-4 text-xl font-semibold">TMDB (optional browse rows)</h2>
           <input
@@ -262,6 +392,7 @@ export default function SettingsPage() {
             className="w-full rounded bg-[#333] px-4 py-3 focus:outline-none focus:ring-2 focus:ring-white/30"
           />
         </section>
+        )}
 
         <button
           type="button"

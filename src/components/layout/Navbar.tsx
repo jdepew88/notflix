@@ -29,7 +29,16 @@ export function Navbar() {
   const [genreOpen, setGenreOpen] = useState(false);
   const activeProfileId = useAppStore((s) => s.activeProfileId);
   const profiles = useAppStore((s) => s.profiles);
+  const settings = useAppStore((s) => s.settings);
+  const logoutLocal = useAppStore((s) => s.logoutLocal);
   const activeProfile = profiles.find((p) => p.id === activeProfileId);
+
+  const navLinks = [
+    { href: "/browse", label: "Home" },
+    { href: "/browse/search", label: "Search" },
+    { href: "/browse/my-list", label: "My List" },
+    ...(settings.plexOnly ? [] : [{ href: "/browse/debrid", label: "Debrid" }]),
+  ];
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 0);
@@ -37,12 +46,11 @@ export function Navbar() {
     return () => window.removeEventListener("scroll", onScroll);
   }, []);
 
-  const links = [
-    { href: "/browse", label: "Home" },
-    { href: "/browse/search", label: "Search" },
-    { href: "/browse/my-list", label: "My List" },
-    { href: "/browse/debrid", label: "Debrid" },
-  ];
+  const handleSignOut = async () => {
+    await fetch("/api/auth/logout", { method: "POST" });
+    logoutLocal();
+    window.location.href = "/";
+  };
 
   return (
     <nav
@@ -61,7 +69,7 @@ export function Navbar() {
             NETFLIX
           </Link>
           <ul className="hidden items-center gap-4 md:flex lg:gap-5">
-            {links.map((link) => (
+            {navLinks.map((link) => (
               <li key={link.href}>
                 <Link
                   href={link.href}
@@ -143,13 +151,16 @@ export function Navbar() {
                 >
                   Settings
                 </Link>
-                <Link
-                  href="/"
-                  className="block px-4 py-2 text-sm hover:underline"
-                  onClick={() => setMenuOpen(false)}
+                <button
+                  type="button"
+                  className="block w-full px-4 py-2 text-left text-sm hover:underline"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    void handleSignOut();
+                  }}
                 >
                   Sign out
-                </Link>
+                </button>
               </div>
             )}
           </div>
@@ -157,7 +168,7 @@ export function Navbar() {
       </div>
 
       <div className="flex gap-4 overflow-x-auto px-4 pb-2 md:hidden row-scroll">
-        {links.map((link) => (
+        {navLinks.map((link) => (
           <Link
             key={link.href}
             href={link.href}

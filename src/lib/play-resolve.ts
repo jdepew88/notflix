@@ -24,6 +24,7 @@ export interface PlayResolveRequest {
   torrentioUrl?: string;
   realDebridToken?: string;
   tmdbApiKey?: string;
+  plexOnly?: boolean;
 }
 
 export interface PlayResolveResult {
@@ -50,6 +51,7 @@ export async function resolvePlayback(
     torrentioUrl,
     realDebridToken,
     tmdbApiKey,
+    plexOnly,
   } = request;
 
   if (plexUrl && plexToken) {
@@ -76,6 +78,13 @@ export async function resolvePlayback(
     } catch (err) {
       console.warn("[play-resolve] Plex library check failed:", err);
     }
+  }
+
+  if (plexOnly) {
+    return {
+      source: "none",
+      message: "Not in your Plex library. Add it to Plex or turn off Plex-only mode in Settings.",
+    };
   }
 
   const torrentioBase =

@@ -74,6 +74,7 @@ export function mergeAllSettings(
       plexToken: coalesce(layer.plexToken, merged.plexToken),
       torrentioUrl: coalesce(layer.torrentioUrl, merged.torrentioUrl),
       directPlay: layer.directPlay ?? merged.directPlay,
+      plexOnly: layer.plexOnly ?? merged.plexOnly,
     };
   }
   return merged;

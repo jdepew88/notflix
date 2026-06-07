@@ -1,28 +1,42 @@
 "use client";
 
 import { useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { PortalProvider } from "@/providers/PortalProvider";
 import { DetailModalProvider } from "@/providers/DetailModalProvider";
 import { TitleCardPortal } from "@/components/browse/TitleCardPortal";
 import { DetailModal } from "@/components/browse/DetailModal";
 import { useAppStore } from "@/lib/store";
 
-function SettingsHydrator() {
+function AppHydrator() {
+  const router = useRouter();
   const updateSettings = useAppStore((s) => s.updateSettings);
+  const setUser = useAppStore((s) => s.setUser);
+  const hydrateUserState = useAppStore((s) => s.hydrateUserState);
+  const activeProfileId = useAppStore((s) => s.activeProfileId);
 
   useEffect(() => {
     let cancelled = false;
 
     async function hydrate() {
       try {
-        const res = await fetch("/api/settings/sync?config=1", { credentials: "same-origin" });
-        if (!res.ok || cancelled) return;
-        const data = await res.json();
-        if (data.settings) {
-          updateSettings(data.settings);
+        const [configRes, meRes] = await Promise.all([
+          fetch("/api/settings/sync?config=1", { credentials: "same-origin" }),
+          fetch("/api/auth/me", { credentials: "same-origin" }),
+        ]);
+
+        if (!cancelled && configRes.ok) {
+          const data = await configRes.json();
+          if (data.settings) updateSettings(data.settings);
+        }
+
+        if (!cancelled && meRes.ok) {
+          const data = await meRes.json();
+          setUser(data.user);
+          hydrateUserState(data.state);
         }
       } catch {
-        /* server settings optional on first paint */
+        /* optional */
       }
     }
 
@@ -30,7 +44,17 @@ function SettingsHydrator() {
     return () => {
       cancelled = true;
     };
-  }, [updateSettings]);
+  }, [updateSettings, setUser, hydrateUserState]);
+
+  useEffect(() => {
+    const path = window.location.pathname;
+    if (
+      (path.startsWith("/browse") || path.startsWith("/watch") || path === "/settings") &&
+      !activeProfileId
+    ) {
+      router.replace("/profiles");
+    }
+  }, [activeProfileId, router]);
 
   return null;
 }
@@ -49,7 +73,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
   return (
     <PortalProvider>
       <DetailModalProvider>
-        <SettingsHydrator />
+        <AppHydrator />
         {children}
         <TitleCardPortal />
         <DetailModal />

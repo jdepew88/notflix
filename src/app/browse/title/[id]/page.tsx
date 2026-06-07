@@ -6,17 +6,16 @@ import { MediaImage } from "@/components/ui/MediaImage";
 import { useParams } from "next/navigation";
 import { Play, Plus, Check, ArrowLeft } from "lucide-react";
 import { posterUrl, backdropUrl } from "@/lib/tmdb";
-import { useAppStore } from "@/lib/store";
+import { useAppStore, isInMyList } from "@/lib/store";
 import type { MediaItem } from "@/lib/types";
 
 export default function TitleDetailPage() {
   const params = useParams();
   const id = decodeURIComponent(params.id as string);
   const [item, setItem] = useState<MediaItem | null>(null);
-  const myList = useAppStore((s) => s.myList);
   const addToMyList = useAppStore((s) => s.addToMyList);
   const removeFromMyList = useAppStore((s) => s.removeFromMyList);
-  const inList = myList.includes(id);
+  const inList = isInMyList(id);
 
   useEffect(() => {
     async function load() {

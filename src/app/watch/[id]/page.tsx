@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { X } from "lucide-react";
 import { VideoPlayer } from "@/components/player/VideoPlayer";
-import { useAppStore } from "@/lib/store";
+import { useAppStore, getMediaProgress } from "@/lib/store";
 import { posterUrl } from "@/lib/tmdb";
 import {
   fetchWithSettings,
@@ -32,7 +32,7 @@ export default function WatchPage() {
   const [plexRatingKey, setPlexRatingKey] = useState<string | null>(null);
   const [resolveStatus, setResolveStatus] = useState("");
   const updateProgress = useAppStore((s) => s.updateProgress);
-  const progress = useAppStore((s) => s.continueWatching[id] ?? 0);
+  const progress = getMediaProgress(id);
   const storeSettings = useAppStore((s) => s.settings);
 
   const startTranscode = useCallback(

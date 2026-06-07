@@ -27,6 +27,7 @@ export function getClientSettings(): AppSettings {
       plexUrl: "",
       plexToken: "",
       directPlay: true,
+      plexOnly: true,
     };
   }
   try {
@@ -48,6 +49,7 @@ function getClientSettingsDefaults(): AppSettings {
     plexUrl: "",
     plexToken: "",
     directPlay: true,
+    plexOnly: true,
   };
 }
 

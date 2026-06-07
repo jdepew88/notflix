@@ -6,7 +6,7 @@ import {
   fetchWithSettings,
   getEffectiveSettings,
 } from "@/lib/client-settings";
-import { useAppStore } from "@/lib/store";
+import { getContinueWatchingItems, useAppStore } from "@/lib/store";
 import { HeroBanner } from "@/components/browse/HeroBanner";
 import { ContentRow } from "@/components/browse/ContentRow";
 import type { MediaItem } from "@/lib/types";
@@ -19,6 +19,7 @@ interface ContentRowData {
 
 export function BrowseContent() {
   const storeSettings = useAppStore((s) => s.settings);
+  const activeProfileId = useAppStore((s) => s.activeProfileId);
   const [rows, setRows] = useState<ContentRowData[]>([]);
   const [hero, setHero] = useState<MediaItem | null>(null);
   const [loading, setLoading] = useState(true);
@@ -28,15 +29,17 @@ export function BrowseContent() {
     async function load() {
       setLoading(true);
       const settings = getEffectiveSettings(storeSettings);
+      const onlyPlex = settings.plexOnly ?? true;
+
       if (settings.plexUrl && settings.plexToken) {
         await ensurePlexCookies(settings);
       }
       try {
         const [trendingRes, popularRes, libraryRes] = await Promise.all([
-          settings.tmdbApiKey
+          !onlyPlex && settings.tmdbApiKey
             ? fetchWithSettings("/api/catalog?type=trending", settings)
             : Promise.resolve(null),
-          settings.tmdbApiKey
+          !onlyPlex && settings.tmdbApiKey
             ? fetchWithSettings("/api/catalog?type=popular", settings)
             : Promise.resolve(null),
           fetchWithSettings("/api/library", settings),
@@ -51,13 +54,14 @@ export function BrowseContent() {
           libraryItems = libData.items ?? [];
           hasPlexLibrary = libData.source === "plex" && libraryItems.length > 0;
           if (libData.message) setLibraryStatus(libData.message);
-          else if (libData.count) setLibraryStatus(`Loaded ${libData.count} titles from ${libData.source}`);
+          else if (libData.count)
+            setLibraryStatus(`Loaded ${libData.count} titles from ${libData.source}`);
           for (const row of libData.rows ?? []) {
             newRows.push(row);
           }
         }
 
-        if (!hasPlexLibrary) {
+        if (!onlyPlex && !hasPlexLibrary) {
           if (trendingRes?.ok) {
             const data = await trendingRes.json();
             if (data.items?.length) {
@@ -73,6 +77,15 @@ export function BrowseContent() {
           }
         }
 
+        const continueItems = getContinueWatchingItems(libraryItems);
+        if (continueItems.length > 0) {
+          newRows.unshift({
+            id: "continue-watching",
+            title: "Continue Watching",
+            items: continueItems,
+          });
+        }
+
         setRows(newRows);
         const heroMovie = libraryItems.find((i) => i.type === "movie");
         setHero(heroMovie ?? libraryItems[0] ?? newRows[0]?.items[0] ?? null);
@@ -81,7 +94,7 @@ export function BrowseContent() {
       }
     }
     load();
-  }, [storeSettings]);
+  }, [storeSettings, activeProfileId]);
 
   if (loading) {
     return (

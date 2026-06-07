@@ -1,0 +1,5 @@
+import path from "path";
+
+export function getDataPath(): string {
+  return process.env.DATA_PATH?.trim() || path.join(process.cwd(), ".data");
+}

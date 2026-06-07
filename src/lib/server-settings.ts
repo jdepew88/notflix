@@ -19,6 +19,7 @@ export interface ServerSettings {
   plexToken: string;
   torrentioUrl: string;
   directPlay: boolean;
+  plexOnly: boolean;
 }
 
 function settingsFilePath(): string {
@@ -36,6 +37,7 @@ export function settingsFromEnv(): ServerSettings {
     plexToken: getPlexToken(),
     torrentioUrl: getTorrentioUrl(),
     directPlay: process.env.DIRECT_PLAY !== "false",
+    plexOnly: process.env.PLEX_ONLY !== "false",
   };
 }
 
@@ -61,6 +63,7 @@ function mergeLayer(
     plexToken: overlay.plexToken || base.plexToken,
     torrentioUrl: overlay.torrentioUrl || base.torrentioUrl,
     directPlay: overlay.directPlay ?? base.directPlay,
+    plexOnly: overlay.plexOnly ?? base.plexOnly,
   };
 }
 
@@ -135,5 +138,6 @@ export function toClientSettings(settings: ServerSettings) {
     plexUrl: settings.plexUrl,
     plexToken: settings.plexToken,
     directPlay: settings.directPlay,
+    plexOnly: settings.plexOnly,
   };
 }

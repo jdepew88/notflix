@@ -38,6 +38,7 @@ export async function GET(request: NextRequest) {
     torrentioUrl: settings.torrentioUrl || getTorrentioUrl() || undefined,
     realDebridToken: settings.realDebridToken || getRealDebridToken() || undefined,
     tmdbApiKey: settings.tmdbApiKey || getTmdbApiKey() || undefined,
+    plexOnly: settings.plexOnly ?? true,
   });
 
   if (result.source === "none") {

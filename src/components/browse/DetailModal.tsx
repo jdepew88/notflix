@@ -6,16 +6,16 @@ import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, Play, Plus, ThumbsUp, Volume2, VolumeX, Check } from "lucide-react";
 import { useDetailModal } from "@/providers/DetailModalProvider";
-import { useAppStore } from "@/lib/store";
+import { useAppStore, isInMyList } from "@/lib/store";
 import { backdropUrl, posterUrl } from "@/lib/tmdb";
 import { TitleCard } from "./TitleCard";
 import type { MediaItem } from "@/lib/types";
 
 export function DetailModal() {
   const { open, item, closeDetail } = useDetailModal();
-  const myList = useAppStore((s) => s.myList);
   const addToMyList = useAppStore((s) => s.addToMyList);
   const removeFromMyList = useAppStore((s) => s.removeFromMyList);
+  const plexOnly = useAppStore((s) => s.settings.plexOnly);
   const [details, setDetails] = useState<MediaItem | null>(null);
   const [similar, setSimilar] = useState<MediaItem[]>([]);
   const [trailerKey, setTrailerKey] = useState<string | null>(null);
@@ -36,7 +36,7 @@ export function DetailModal() {
         item.tmdbId ??
         (item.id.startsWith("tmdb-") ? parseInt(item.id.replace("tmdb-", ""), 10) : null);
 
-      if (tmdbId) {
+      if (tmdbId && !plexOnly) {
         const [detailRes, similarRes, videoRes] = await Promise.all([
           fetch(`/api/catalog?type=details&id=${tmdbId}`),
           fetch(`/api/catalog?type=similar&id=${tmdbId}`),
@@ -55,13 +55,25 @@ export function DetailModal() {
           const data = await videoRes.json();
           setTrailerKey(data.key);
         }
+      } else if (item.genres?.length) {
+        setDetails(item);
+        const genre = item.genres[0];
+        const res = await fetch(`/api/library?genre=${encodeURIComponent(genre)}`);
+        if (res.ok) {
+          const data = await res.json();
+          setSimilar(
+            (data.items ?? []).filter((i: MediaItem) => i.id !== item.id).slice(0, 12)
+          );
+        } else {
+          setDetails(item);
+        }
       } else {
         setDetails(item);
       }
     }
 
     load();
-  }, [open, item]);
+  }, [open, item, plexOnly]);
 
   useEffect(() => {
     if (open) {
@@ -78,7 +90,7 @@ export function DetailModal() {
   if (!display) return null;
 
   const backdrop = backdropUrl(display.backdropPath);
-  const inList = myList.includes(display.id);
+  const inList = isInMyList(display.id);
 
   return (
     <AnimatePresence>

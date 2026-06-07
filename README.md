@@ -25,10 +25,12 @@ Open [http://localhost:3000](http://localhost:3000).
 
 ## GitHub workflow
 
+Repo: [https://github.com/jdepew88/notflix](https://github.com/jdepew88/notflix)
+
 ```bash
 git add .
 git commit -m "Your message"
-git push origin main
+git push origin master
 ```
 
 Never commit `.env` or `.env.local`. Only `.env.example` is tracked.
@@ -42,7 +44,7 @@ Never commit `.env` or `.env.local`. Only `.env.example` is tracked.
 ```bash
 mkdir -p /mnt/user/appdata/notflix
 cd /mnt/user/appdata/notflix
-git clone <your-repo-url> .
+git clone https://github.com/jdepew88/notflix.git .
 ```
 
 ### 2. Configure environment

@@ -2,38 +2,51 @@
 
 import { useEffect, useState } from "react";
 import { TitleCard } from "@/components/browse/TitleCard";
-import { useAppStore } from "@/lib/store";
+import {
+  fetchWithSettings,
+  getEffectiveSettings,
+} from "@/lib/client-settings";
+import {
+  getActiveMyList,
+  getContinueWatchingItems,
+  useAppStore,
+} from "@/lib/store";
 import type { MediaItem } from "@/lib/types";
 
 export default function MyListPage() {
-  const myList = useAppStore((s) => s.myList);
-  const continueWatching = useAppStore((s) => s.continueWatching);
+  const storeSettings = useAppStore((s) => s.settings);
+  const activeProfileId = useAppStore((s) => s.activeProfileId);
+  const myListByProfile = useAppStore((s) => s.myListByProfile);
   const [allItems, setAllItems] = useState<MediaItem[]>([]);
 
   useEffect(() => {
     async function load() {
-      const [catalogRes, libraryRes] = await Promise.all([
-        fetch("/api/catalog?type=trending"),
-        fetch("/api/library"),
-      ]);
+      const settings = getEffectiveSettings(storeSettings);
+      const onlyPlex = settings.plexOnly ?? true;
       const items: MediaItem[] = [];
-      if (catalogRes.ok) {
-        const data = await catalogRes.json();
-        items.push(...(data.items ?? []));
-      }
+
+      const libraryRes = await fetchWithSettings("/api/library", settings);
       if (libraryRes.ok) {
         const data = await libraryRes.json();
         items.push(...(data.items ?? []));
       }
+
+      if (!onlyPlex && settings.tmdbApiKey) {
+        const catalogRes = await fetchWithSettings("/api/catalog?type=trending", settings);
+        if (catalogRes.ok) {
+          const data = await catalogRes.json();
+          items.push(...(data.items ?? []));
+        }
+      }
+
       setAllItems(items);
     }
     load();
-  }, []);
+  }, [storeSettings]);
 
+  const myList = activeProfileId ? myListByProfile[activeProfileId] ?? [] : getActiveMyList();
   const listItems = allItems.filter((i) => myList.includes(i.id));
-  const continueItems = allItems
-    .filter((i) => continueWatching[i.id] && continueWatching[i.id] > 0 && continueWatching[i.id] < 95)
-    .map((i) => ({ ...i, progress: continueWatching[i.id] }));
+  const continueItems = getContinueWatchingItems(allItems);
 
   return (
     <div className="min-h-screen px-4 py-8 md:px-12 lg:px-16">

@@ -3,36 +3,61 @@
 import { useState, useCallback, useEffect } from "react";
 import { Search as SearchIcon } from "lucide-react";
 import { TitleCard } from "@/components/browse/TitleCard";
+import {
+  fetchWithSettings,
+  getEffectiveSettings,
+} from "@/lib/client-settings";
+import { useAppStore } from "@/lib/store";
 import type { MediaItem } from "@/lib/types";
 
 export default function SearchPage() {
+  const storeSettings = useAppStore((s) => s.settings);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<MediaItem[]>([]);
   const [loading, setLoading] = useState(false);
 
-  const search = useCallback(async (q: string) => {
-    if (!q.trim()) {
-      setResults([]);
-      return;
-    }
-    setLoading(true);
-    try {
-      const [catalogRes, libraryRes] = await Promise.all([
-        fetch(`/api/catalog?type=search&q=${encodeURIComponent(q)}`),
-        fetch("/api/library"),
-      ]);
-      const catalogData = catalogRes.ok ? await catalogRes.json() : { items: [] };
-      const libraryData = libraryRes.ok ? await libraryRes.json() : { items: [] };
+  const search = useCallback(
+    async (q: string) => {
+      if (!q.trim()) {
+        setResults([]);
+        return;
+      }
+      setLoading(true);
+      try {
+        const settings = getEffectiveSettings(storeSettings);
+        const onlyPlex = settings.plexOnly ?? true;
+        const needle = q.toLowerCase();
 
-      const libraryFiltered = (libraryData.items ?? []).filter((item: MediaItem) =>
-        item.title.toLowerCase().includes(q.toLowerCase())
-      );
+        const libraryRes = await fetchWithSettings("/api/library", settings);
+        const libraryData = libraryRes.ok ? await libraryRes.json() : { items: [] };
+        const libraryFiltered = (libraryData.items ?? []).filter((item: MediaItem) =>
+          item.title.toLowerCase().includes(needle)
+        );
 
-      setResults([...libraryFiltered, ...(catalogData.items ?? [])]);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+        let catalogItems: MediaItem[] = [];
+        if (!onlyPlex && settings.tmdbApiKey) {
+          const catalogRes = await fetchWithSettings(
+            `/api/catalog?type=search&q=${encodeURIComponent(q)}`,
+            settings
+          );
+          const catalogData = catalogRes.ok ? await catalogRes.json() : { items: [] };
+          catalogItems = catalogData.items ?? [];
+        }
+
+        const seen = new Set<string>();
+        const merged = [...libraryFiltered, ...catalogItems].filter((item) => {
+          if (seen.has(item.id)) return false;
+          seen.add(item.id);
+          return true;
+        });
+
+        setResults(merged);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [storeSettings]
+  );
 
   useEffect(() => {
     const timer = setTimeout(() => search(query), 300);
@@ -72,7 +97,7 @@ export default function SearchPage() {
 
       {!loading && query && results.length === 0 && (
         <p className="mt-8 text-center text-netflix-light-gray">
-          No results found. Try a different search or add content via Real-Debrid.
+          No results found in your library. Try a different search or add the title to Plex.
         </p>
       )}
     </div>

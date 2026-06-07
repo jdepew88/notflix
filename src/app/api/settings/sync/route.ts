@@ -20,6 +20,7 @@ export async function POST(request: NextRequest) {
       plexUrl: body.plexUrl,
       plexToken: body.plexToken,
       directPlay: body.directPlay,
+      plexOnly: body.plexOnly,
     });
 
     saveServerSettings(merged);

@@ -8,7 +8,7 @@ import { Play, Plus, ThumbsUp, ChevronDown, Check } from "lucide-react";
 import { createPortal } from "react-dom";
 import { usePortal } from "@/providers/PortalProvider";
 import { useDetailModal } from "@/providers/DetailModalProvider";
-import { useAppStore } from "@/lib/store";
+import { useAppStore, isInMyList } from "@/lib/store";
 import { posterUrl, backdropUrl } from "@/lib/tmdb";
 import { cn } from "@/lib/cn";
 
@@ -28,7 +28,6 @@ export function TitleCardPortal() {
   const { anchorElement, item, setPortal } = usePortal();
   const { openDetail } = useDetailModal();
   const router = useRouter();
-  const myList = useAppStore((s) => s.myList);
   const addToMyList = useAppStore((s) => s.addToMyList);
   const removeFromMyList = useAppStore((s) => s.removeFromMyList);
   const [mounted, setMounted] = useState(false);
@@ -55,7 +54,7 @@ export function TitleCardPortal() {
 
   const poster = posterUrl(item.posterPath, "w500");
   const backdrop = backdropUrl(item.backdropPath);
-  const inList = myList.includes(item.id);
+  const inList = isInMyList(item.id);
   const score = matchScore(item.rating);
 
   return createPortal(

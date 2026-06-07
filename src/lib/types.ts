@@ -64,4 +64,5 @@ export interface AppSettings {
   plexUrl?: string;
   plexToken?: string;
   directPlay?: boolean;
+  plexOnly?: boolean;
 }
