@@ -30,10 +30,8 @@ export function isHlsSource(src: string): boolean {
 
 export function isSafariBrowser(): boolean {
   if (typeof navigator === "undefined") return false;
-  return (
-    /^((?!chrome|android|crios|fxios).)*safari/i.test(navigator.userAgent) ||
-    ("webkitShowPlaybackTargetPicker" in document.createElement("video"))
-  );
+  const ua = navigator.userAgent;
+  return /Safari/i.test(ua) && !/Chrome|CriOS|Chromium|Edg|OPR|Firefox|FxiOS/i.test(ua);
 }
 
 export interface CastMediaDescriptor {

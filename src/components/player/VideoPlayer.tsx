@@ -76,6 +76,7 @@ export function VideoPlayer({
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const hideTimer = useRef<ReturnType<typeof setTimeout>>(null);
+  const clickTimer = useRef<ReturnType<typeof setTimeout>>(null);
   const hlsRef = useRef<Hls | null>(null);
 
   const [playing, setPlaying] = useState(false);
@@ -87,8 +88,8 @@ export function VideoPlayer({
   const [fullscreen, setFullscreen] = useState(false);
   const [buffering, setBuffering] = useState(false);
   const [playbackError, setPlaybackError] = useState<string | null>(null);
-  const [airPlayReady, setAirPlayReady] = useState(false);
   const [remoteError, setRemoteError] = useState<string | null>(null);
+  const showAirPlay = isSafariBrowser();
 
   const isHls = isHlsSource(src);
   const useNativeHls =
@@ -126,10 +127,13 @@ export function VideoPlayer({
         if (hls.subtitleTracks.length > 0) {
           hls.subtitleDisplay = subtitleIndex !== null;
           if (subtitleIndex !== null) {
-            const idx = hls.subtitleTracks.findIndex(
-              (t) => t.id === subtitleIndex
+            const byStreamId = hls.subtitleTracks.findIndex((t) => t.id === subtitleIndex);
+            const englishIdx = hls.subtitleTracks.findIndex((t) =>
+              /en|english/i.test(t.name || t.lang || "")
             );
-            if (idx >= 0) hls.subtitleTrack = idx;
+            const idx =
+              byStreamId >= 0 ? byStreamId : englishIdx >= 0 ? englishIdx : 0;
+            hls.subtitleTrack = idx;
           }
         }
       });
@@ -160,7 +164,13 @@ export function VideoPlayer({
     hls.subtitleDisplay = subtitleIndex !== null;
     if (subtitleIndex === null) {
       hls.subtitleTrack = -1;
+      return;
     }
+    const byStreamId = hls.subtitleTracks.findIndex((t) => t.id === subtitleIndex);
+    const englishIdx = hls.subtitleTracks.findIndex((t) =>
+      /en|english/i.test(t.name || t.lang || "")
+    );
+    hls.subtitleTrack = byStreamId >= 0 ? byStreamId : englishIdx >= 0 ? englishIdx : 0;
   }, [subtitleIndex]);
 
   useEffect(() => {
@@ -174,6 +184,14 @@ export function VideoPlayer({
     video.addEventListener("loadedmetadata", setStart);
     return () => video.removeEventListener("loadedmetadata", setStart);
   }, [initialProgress]);
+
+  useEffect(() => {
+    const onFullscreenChange = () => {
+      setFullscreen(!!document.fullscreenElement);
+    };
+    document.addEventListener("fullscreenchange", onFullscreenChange);
+    return () => document.removeEventListener("fullscreenchange", onFullscreenChange);
+  }, []);
 
   const resetHideTimer = useCallback(() => {
     setShowControls(true);
@@ -199,13 +217,37 @@ export function VideoPlayer({
   const toggleFullscreen = async () => {
     const container = containerRef.current;
     if (!container) return;
-    if (!document.fullscreenElement) {
-      await container.requestFullscreen();
-      setFullscreen(true);
-    } else {
-      await document.exitFullscreen();
-      setFullscreen(false);
+    try {
+      if (document.fullscreenElement) {
+        await document.exitFullscreen();
+      } else {
+        await container.requestFullscreen();
+      }
+    } catch {
+      /* browser may block fullscreen */
     }
+    resetHideTimer();
+  };
+
+  const handleVideoClick = () => {
+    if (clickTimer.current) clearTimeout(clickTimer.current);
+    clickTimer.current = setTimeout(() => {
+      togglePlay();
+      clickTimer.current = null;
+    }, 250);
+  };
+
+  const handleVideoDoubleClick = (e: React.MouseEvent) => {
+    e.preventDefault();
+    if (clickTimer.current) {
+      clearTimeout(clickTimer.current);
+      clickTimer.current = null;
+    }
+    void toggleFullscreen();
+  };
+
+  const stopClickPropagation = (e: React.MouseEvent) => {
+    e.stopPropagation();
   };
 
   const seek = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -229,14 +271,8 @@ export function VideoPlayer({
     setRemoteError(null);
     const video = videoRef.current as HTMLVideoElement & {
       webkitShowPlaybackTargetPicker?: () => void;
-      webkitCurrentPlaybackTargetIsWireless?: boolean;
     };
-    if (!video) return;
-
-    if (typeof video.webkitShowPlaybackTargetPicker !== "function") {
-      setRemoteError("AirPlay is available in Safari on Apple devices.");
-      return;
-    }
+    if (!video || typeof video.webkitShowPlaybackTargetPicker !== "function") return;
 
     try {
       if (hlsRef.current) {
@@ -253,11 +289,10 @@ export function VideoPlayer({
   };
 
   useEffect(() => {
-    const video = videoRef.current as HTMLVideoElement & {
-      webkitShowPlaybackTargetPicker?: () => void;
+    return () => {
+      if (clickTimer.current) clearTimeout(clickTimer.current);
     };
-    setAirPlayReady(typeof video?.webkitShowPlaybackTargetPicker === "function");
-  }, [src]);
+  }, []);
 
   const progressPct = duration > 0 ? (currentTime / duration) * 100 : 0;
 
@@ -267,6 +302,8 @@ export function VideoPlayer({
       className="relative h-full w-full bg-black"
       onMouseMove={resetHideTimer}
       onTouchStart={resetHideTimer}
+      onClick={handleVideoClick}
+      onDoubleClick={handleVideoDoubleClick}
     >
       <video
         ref={videoRef}
@@ -276,7 +313,6 @@ export function VideoPlayer({
         disableRemotePlayback={false}
         // AirPlay 2 support (Safari / iOS / macOS)
         {...({ "x-webkit-airplay": "allow", airplay: "allow" } as React.VideoHTMLAttributes<HTMLVideoElement>)}
-        onClick={togglePlay}
         onWaiting={() => setBuffering(true)}
         onCanPlay={() => setBuffering(false)}
         onPlay={() => setPlaying(true)}
@@ -338,7 +374,10 @@ export function VideoPlayer({
           {/* Progress bar */}
           <div
             className="group mb-3 h-1 cursor-pointer rounded bg-white/30 transition-all hover:h-1.5"
-            onClick={seek}
+            onClick={(e) => {
+              stopClickPropagation(e);
+              seek(e);
+            }}
           >
             <div
               className="relative h-full rounded bg-netflix-red"
@@ -350,19 +389,20 @@ export function VideoPlayer({
 
           <div className="flex items-center justify-between gap-4">
             <div className="flex items-center gap-3 md:gap-4">
-              <button type="button" onClick={togglePlay} className="text-white hover:text-netflix-light-gray">
+              <button type="button" onClick={(e) => { stopClickPropagation(e); togglePlay(); }} className="text-white hover:text-netflix-light-gray">
                 {playing ? <Pause className="h-7 w-7 md:h-8 md:w-8" /> : <Play className="h-7 w-7 fill-current md:h-8 md:w-8" />}
               </button>
-              <button type="button" onClick={() => skip(-10)} className="hidden text-white hover:text-netflix-light-gray sm:block">
+              <button type="button" onClick={(e) => { stopClickPropagation(e); skip(-10); }} className="hidden text-white hover:text-netflix-light-gray sm:block">
                 <SkipBack className="h-5 w-5" />
               </button>
-              <button type="button" onClick={() => skip(10)} className="hidden text-white hover:text-netflix-light-gray sm:block">
+              <button type="button" onClick={(e) => { stopClickPropagation(e); skip(10); }} className="hidden text-white hover:text-netflix-light-gray sm:block">
                 <SkipForward className="h-5 w-5" />
               </button>
               <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => {
+                  onClick={(e) => {
+                    stopClickPropagation(e);
                     const v = videoRef.current;
                     if (!v) return;
                     v.muted = !v.muted;
@@ -377,6 +417,7 @@ export function VideoPlayer({
                   max={1}
                   step={0.05}
                   value={volume}
+                  onClick={stopClickPropagation}
                   onChange={(e) => {
                     const val = parseFloat(e.target.value);
                     setVolume(val);
@@ -397,8 +438,7 @@ export function VideoPlayer({
             <div className="flex items-center gap-3">
               {(audioTracks.length > 1 || subtitleTracks.length > 0) &&
                 onAudioChange &&
-                onSubtitleChange &&
-                !isDirectPlay && (
+                onSubtitleChange && (
                 <TrackSelector
                   audioTracks={audioTracks}
                   subtitleTracks={subtitleTracks}
@@ -412,7 +452,10 @@ export function VideoPlayer({
               {transcodeAvailable && onRequestTranscode && isDirectPlay && (
                 <button
                   type="button"
-                  onClick={onRequestTranscode}
+                  onClick={(e) => {
+                    stopClickPropagation(e);
+                    onRequestTranscode();
+                  }}
                   className="text-xs text-netflix-light-gray hover:text-white"
                   title="Transcode for unsupported codecs or audio/subtitle selection"
                 >
@@ -420,10 +463,13 @@ export function VideoPlayer({
                 </button>
               )}
 
-              {airPlayReady && (
+              {showAirPlay && (
               <button
                 type="button"
-                onClick={handleAirPlay}
+                onClick={(e) => {
+                  stopClickPropagation(e);
+                  void handleAirPlay();
+                }}
                 className="text-white hover:text-netflix-light-gray"
                 title="AirPlay"
               >
@@ -433,7 +479,8 @@ export function VideoPlayer({
 
               <button
                 type="button"
-                onClick={() => {
+                onClick={(e) => {
+                  stopClickPropagation(e);
                   clearCastError();
                   if (casting) stopCast();
                   else void startCast();
@@ -448,7 +495,14 @@ export function VideoPlayer({
                 <Cast className="h-5 w-5" />
               </button>
 
-              <button type="button" onClick={toggleFullscreen} className="text-white hover:text-netflix-light-gray">
+              <button
+                type="button"
+                onClick={(e) => {
+                  stopClickPropagation(e);
+                  void toggleFullscreen();
+                }}
+                className="text-white hover:text-netflix-light-gray"
+              >
                 {fullscreen ? <Minimize className="h-5 w-5" /> : <Maximize className="h-5 w-5" />}
               </button>
             </div>

@@ -57,10 +57,12 @@ export async function GET(request: NextRequest) {
     const item = await getPlexItem(baseUrl, token, playKey);
 
     if (mode === "transcode") {
+      const item = await getPlexItem(baseUrl, token, playKey);
       return NextResponse.json({
         streamUrl: plexHlsStreamUrl(playKey, baseUrl),
         mode: "hls",
         ratingKey: playKey,
+        partKey: item?.plexPartKey,
       });
     }
 

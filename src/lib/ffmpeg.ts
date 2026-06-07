@@ -145,7 +145,7 @@ function trackLabel(stream: {
   return parts.join(" · ");
 }
 
-export async function probeMediaUrl(url: string): Promise<ProbeResult> {
+export async function probeMediaFile(filePath: string): Promise<ProbeResult> {
   const output = await runCommand(getFfprobePath(), [
     "-v",
     "quiet",
@@ -153,12 +153,12 @@ export async function probeMediaUrl(url: string): Promise<ProbeResult> {
     "json",
     "-show_streams",
     "-show_format",
-    "-user_agent",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-    "-i",
-    url,
+    filePath,
   ]);
+  return parseProbeOutput(output);
+}
 
+function parseProbeOutput(output: string): ProbeResult {
   const data = JSON.parse(output) as {
     streams?: Array<{
       index: number;
@@ -215,6 +215,84 @@ export async function probeMediaUrl(url: string): Promise<ProbeResult> {
   };
 }
 
+export async function probeMediaUrl(url: string): Promise<ProbeResult> {
+  const output = await runCommand(getFfprobePath(), [
+    "-v",
+    "quiet",
+    "-print_format",
+    "json",
+    "-show_streams",
+    "-show_format",
+    "-user_agent",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+    "-i",
+    url,
+  ]);
+  return parseProbeOutput(output);
+}
+
+const TEXT_SUBTITLE_CODECS = new Set([
+  "subrip",
+  "srt",
+  "ass",
+  "ssa",
+  "mov_text",
+  "webvtt",
+  "text",
+]);
+
+export function isTextSubtitleCodec(codec: string): boolean {
+  const c = codec.toLowerCase();
+  return TEXT_SUBTITLE_CODECS.has(c) || c.includes("subrip");
+}
+
+export function isEnglishLanguage(value?: string): boolean {
+  if (!value) return false;
+  const normalized = value.toLowerCase().trim();
+  if (["en", "eng", "english"].includes(normalized)) return true;
+  const primary = normalized.split(/[-_]/)[0];
+  return primary === "en" || primary === "eng";
+}
+
+function trackMatchesEnglish(track: StreamTrack): boolean {
+  return isEnglishLanguage(track.language) || isEnglishLanguage(track.title);
+}
+
+export function defaultSubtitleTrack(subtitles: StreamTrack[]): number | null {
+  if (subtitles.length === 0) return null;
+
+  const english = subtitles.filter(trackMatchesEnglish);
+  if (english.length > 0) {
+    return (
+      english.find((t) => t.default && !t.forced)?.index ??
+      english.find((t) => !t.forced)?.index ??
+      english[0].index
+    );
+  }
+
+  const def = subtitles.find((t) => t.default);
+  if (def) return def.index;
+  return subtitles[0].index;
+}
+
+export function subtitleStreamOrdinal(
+  subtitles: StreamTrack[],
+  absoluteIndex: number
+): number {
+  const idx = subtitles.findIndex((s) => s.index === absoluteIndex);
+  return idx >= 0 ? idx : 0;
+}
+
+export function trackResponseDefaults(probe: ProbeResult) {
+  const defaultSubtitleIndex = defaultSubtitleTrack(probe.subtitles);
+  return {
+    ...probe,
+    defaultAudioIndex: defaultAudioTrack(probe.audio),
+    defaultSubtitleIndex,
+    needsSubtitles: defaultSubtitleIndex !== null,
+  };
+}
+
 export function defaultAudioTrack(audio: StreamTrack[]): number {
   const aac = audio.find((a) => a.codec.toLowerCase() === "aac");
   if (aac) return aac.index;
@@ -223,10 +301,10 @@ export function defaultAudioTrack(audio: StreamTrack[]): number {
   return audio[0]?.index ?? 0;
 }
 
-export function sessionId(url: string, audioIndex: number, subtitleIndex: number): string {
+export function sessionId(input: string, audioIndex: number, subtitleIndex: number): string {
   return crypto
     .createHash("sha256")
-    .update(`${url}|${audioIndex}|${subtitleIndex}`)
+    .update(`${input}|${audioIndex}|${subtitleIndex}`)
     .digest("hex")
     .slice(0, 16);
 }
@@ -250,14 +328,25 @@ export async function waitForFile(filePath: string, timeoutMs = 45000): Promise<
 
 const activeJobs = new Map<string, Promise<void>>();
 
+function subtitleFilterPath(input: string): string {
+  const normalized = input.replace(/\\/g, "/");
+  if (/^https?:\/\//i.test(normalized)) {
+    return `'${normalized.replace(/'/g, "'\\''")}'`;
+  }
+  return normalized.replace(/:/g, "\\:").replace(/'/g, "\\'");
+}
+
 export async function startHlsTranscode(
-  url: string,
+  input: string,
   audioStreamIndex: number,
-  subtitleStreamIndex: number | null
+  subtitleStreamIndex: number | null,
+  subtitleCodec?: string,
+  subtitlesForOrdinal: StreamTrack[] = []
 ): Promise<{ session: string; manifestPath: string }> {
-  const session = sessionId(url, audioStreamIndex, subtitleStreamIndex ?? -1);
+  const session = sessionId(input, audioStreamIndex, subtitleStreamIndex ?? -1);
   const outDir = cachePath(session);
   const manifestPath = path.join(outDir, "master.m3u8");
+  const isRemote = /^https?:\/\//i.test(input);
 
   try {
     await fsPromises.access(manifestPath);
@@ -271,23 +360,45 @@ export async function startHlsTranscode(
       session,
       (async () => {
         await fsPromises.mkdir(outDir, { recursive: true });
+
+        const inputArgs = isRemote
+          ? [
+              "-reconnect",
+              "1",
+              "-reconnect_streamed",
+              "1",
+              "-reconnect_delay_max",
+              "5",
+              "-user_agent",
+              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            ]
+          : [];
+
+        const burnInImageSub =
+          subtitleStreamIndex !== null &&
+          subtitleStreamIndex >= 0 &&
+          subtitleCodec &&
+          !isTextSubtitleCodec(subtitleCodec);
+
+        const subOrdinal =
+          subtitleStreamIndex !== null && subtitleStreamIndex >= 0
+            ? subtitleStreamOrdinal(subtitlesForOrdinal, subtitleStreamIndex)
+            : 0;
+
         const args = [
-          "-reconnect",
-          "1",
-          "-reconnect_streamed",
-          "1",
-          "-reconnect_delay_max",
-          "5",
-          "-user_agent",
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+          ...inputArgs,
           "-i",
-          url,
+          input,
           "-map",
           "0:v:0",
           "-map",
           `0:${audioStreamIndex}`,
           "-c:v",
-          "copy",
+          burnInImageSub ? "libx264" : "copy",
+          ...(burnInImageSub ? ["-preset", "ultrafast"] : []),
+          ...(burnInImageSub
+            ? ["-vf", `subtitles=${subtitleFilterPath(input)}:si=${subOrdinal}`]
+            : []),
           "-c:a",
           "aac",
           "-b:a",
@@ -296,7 +407,7 @@ export async function startHlsTranscode(
           "2",
         ];
 
-        if (subtitleStreamIndex !== null && subtitleStreamIndex >= 0) {
+        if (subtitleStreamIndex !== null && subtitleStreamIndex >= 0 && !burnInImageSub) {
           args.push("-map", `0:${subtitleStreamIndex}`, "-c:s", "webvtt");
         }
 

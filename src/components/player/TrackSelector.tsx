@@ -5,6 +5,20 @@ import { Languages, Volume2, ChevronUp } from "lucide-react";
 import type { StreamTrack } from "@/types/media-tracks";
 import { cn } from "@/lib/cn";
 
+function isEnglishTrack(track: StreamTrack): boolean {
+  const lang = (track.language || track.title || "").toLowerCase();
+  return lang === "en" || lang === "eng" || lang.startsWith("en-") || lang.includes("english");
+}
+
+function sortSubtitleTracks(tracks: StreamTrack[]): StreamTrack[] {
+  return [...tracks].sort((a, b) => {
+    const aEn = isEnglishTrack(a);
+    const bEn = isEnglishTrack(b);
+    if (aEn !== bEn) return aEn ? -1 : 1;
+    return a.index - b.index;
+  });
+}
+
 interface TrackSelectorProps {
   audioTracks: StreamTrack[];
   subtitleTracks: StreamTrack[];
@@ -26,6 +40,8 @@ export function TrackSelector({
 }: TrackSelectorProps) {
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<"audio" | "sub">("audio");
+
+  const sortedSubs = sortSubtitleTracks(subtitleTracks);
 
   if (audioTracks.length <= 1 && subtitleTracks.length === 0) return null;
 
@@ -103,7 +119,7 @@ export function TrackSelector({
                 >
                   Off
                 </button>
-                {subtitleTracks.map((track) => (
+                {sortedSubs.map((track) => (
                   <button
                     key={track.index}
                     type="button"

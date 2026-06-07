@@ -21,6 +21,8 @@ export default function WatchPage() {
   const [item, setItem] = useState<MediaItem | null>(null);
   const [streamUrl, setStreamUrl] = useState<string | null>(null);
   const [sourceUrl, setSourceUrl] = useState<string | null>(null);
+  const [sourcePath, setSourcePath] = useState<string | null>(null);
+  const [proxiedStreamUrl, setProxiedStreamUrl] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [transcodeLoading, setTranscodeLoading] = useState(false);
   const [audioTracks, setAudioTracks] = useState<StreamTrack[]>([]);
@@ -36,13 +38,25 @@ export default function WatchPage() {
   const storeSettings = useAppStore((s) => s.settings);
 
   const startTranscode = useCallback(
-    async (url: string, audio: number, subtitle: number | null) => {
+    async (opts: {
+      url?: string | null;
+      path?: string | null;
+      audio: number;
+      subtitle: number | null;
+    }) => {
+      const subParam = opts.subtitle === null ? "-1" : String(opts.subtitle);
+      let query = `audio=${opts.audio}&subtitle=${subParam}`;
+      if (opts.path) {
+        query = `path=${encodeURIComponent(opts.path)}&${query}`;
+      } else if (opts.url) {
+        query = `url=${encodeURIComponent(opts.url)}&${query}`;
+      } else {
+        return;
+      }
+
       setTranscodeLoading(true);
       try {
-        const subParam = subtitle === null ? "-1" : String(subtitle);
-        const res = await fetch(
-          `/api/debrid/transcode?url=${encodeURIComponent(url)}&audio=${audio}&subtitle=${subParam}`
-        );
+        const res = await fetch(`/api/debrid/transcode?${query}`);
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || "Transcode failed");
         setStreamUrl(data.streamUrl);
@@ -53,6 +67,75 @@ export default function WatchPage() {
       }
     },
     []
+  );
+
+  const applyTrackedPlayback = useCallback(
+    async (opts: {
+      url?: string;
+      path?: string;
+      proxiedUrl?: string;
+      externalStreamUrl?: string;
+      useDirectPlay: boolean;
+      subtitleOverride?: number | null;
+    }) => {
+      const tracksQuery = opts.path
+        ? `path=${encodeURIComponent(opts.path)}`
+        : `url=${encodeURIComponent(opts.url!)}`;
+      const tracksRes = await fetch(`/api/media/tracks?${tracksQuery}`);
+      const tracksData = await tracksRes.json();
+
+      if (!tracksRes.ok) {
+        if (tracksData.ffmpegRequired && opts.proxiedUrl) {
+          setStreamUrl(opts.proxiedUrl);
+          setError(
+            tracksData.error ||
+              "ffmpeg not found — subtitles and some audio codecs require ffmpeg."
+          );
+          return;
+        }
+        if (opts.proxiedUrl) setStreamUrl(opts.proxiedUrl);
+        else throw new Error(tracksData.error || "Could not read embedded tracks");
+        return;
+      }
+
+      const audio = tracksData.defaultAudioIndex ?? tracksData.audio?.[0]?.index ?? 0;
+      const subtitle: number | null =
+        opts.subtitleOverride !== undefined ? opts.subtitleOverride : null;
+
+      setAudioTracks(tracksData.audio ?? []);
+      setSubtitleTracks(tracksData.subtitles ?? []);
+      setAudioIndex(audio);
+      setSubtitleIndex(subtitle);
+      setSourceUrl(opts.url ?? null);
+      setSourcePath(opts.path ?? null);
+      if (opts.proxiedUrl) setProxiedStreamUrl(opts.proxiedUrl);
+
+      const needsSubTranscode = subtitle !== null;
+      const canDirectPlay =
+        opts.useDirectPlay && !tracksData.needsTranscode && !needsSubTranscode;
+
+      if (canDirectPlay && (opts.proxiedUrl ?? proxiedStreamUrl)) {
+        setStreamUrl(opts.proxiedUrl ?? proxiedStreamUrl!);
+        return;
+      }
+
+      if (
+        subtitle === null &&
+        !tracksData.needsTranscode &&
+        opts.externalStreamUrl
+      ) {
+        setStreamUrl(opts.externalStreamUrl);
+        return;
+      }
+
+      await startTranscode({
+        url: opts.url,
+        path: opts.path,
+        audio,
+        subtitle,
+      });
+    },
+    [startTranscode, proxiedStreamUrl]
   );
 
   // Sync Plex credentials to httpOnly cookies before playback (required for HLS segment requests)
@@ -76,7 +159,7 @@ export default function WatchPage() {
 
     async function load() {
       const settings = getEffectiveSettings(storeSettings);
-      const useDirectPlay = settings.directPlay && !forceTranscode;
+      const useDirectPlay = Boolean(settings.directPlay) && !forceTranscode;
       const plexMode = useDirectPlay ? "direct" : "transcode";
 
       if (id.startsWith("debrid-")) {
@@ -106,35 +189,11 @@ export default function WatchPage() {
           });
           setSourceUrl(data.streamUrl);
 
-          const tracksRes = await fetch(
-            `/api/debrid/tracks?url=${encodeURIComponent(data.streamUrl)}`
-          );
-          const tracksData = await tracksRes.json();
-
-          if (tracksRes.ok) {
-            setAudioTracks(tracksData.audio ?? []);
-            setSubtitleTracks(tracksData.subtitles ?? []);
-            const audio = tracksData.defaultAudioIndex ?? tracksData.audio?.[0]?.index ?? 0;
-            setAudioIndex(audio);
-            setSubtitleIndex(tracksData.defaultSubtitleIndex ?? null);
-
-            const canDirectPlay =
-              useDirectPlay && !forceTranscode && !tracksData.needsTranscode;
-            if (canDirectPlay) {
-              setStreamUrl(`/api/proxy/stream?url=${encodeURIComponent(data.streamUrl)}`);
-              return;
-            }
-
-            await startTranscode(data.streamUrl, audio, null);
-          } else if (tracksData.ffmpegRequired) {
-            setStreamUrl(`/api/proxy/stream?url=${encodeURIComponent(data.streamUrl)}`);
-            setError(
-              tracksData.error ||
-                "ffmpeg not found — video may play but MKV audio (AC3/DTS) will not work in Chrome."
-            );
-          } else {
-            await startTranscode(data.streamUrl, tracksData.defaultAudioIndex ?? 0, null);
-          }
+          await applyTrackedPlayback({
+            url: data.streamUrl,
+            proxiedUrl: `/api/proxy/stream?url=${encodeURIComponent(data.streamUrl)}`,
+            useDirectPlay,
+          });
         } catch (err) {
           setError(err instanceof Error ? err.message : "Failed to resolve stream");
         }
@@ -143,42 +202,11 @@ export default function WatchPage() {
 
       async function playRemoteStream(item: MediaItem, rawUrl: string, proxiedUrl: string) {
         setItem(item);
-        setSourceUrl(rawUrl);
-
-        if (useDirectPlay) {
-          const tracksRes = await fetch(
-            `/api/debrid/tracks?url=${encodeURIComponent(rawUrl)}`
-          );
-          const tracksData = await tracksRes.json();
-
-          if (tracksRes.ok && tracksData.needsTranscode) {
-            setAudioTracks(tracksData.audio ?? []);
-            setSubtitleTracks(tracksData.subtitles ?? []);
-            const audio = tracksData.defaultAudioIndex ?? tracksData.audio?.[0]?.index ?? 0;
-            setAudioIndex(audio);
-            setSubtitleIndex(tracksData.defaultSubtitleIndex ?? null);
-            await startTranscode(rawUrl, audio, null);
-            return;
-          }
-
-          setStreamUrl(proxiedUrl);
-          return;
-        }
-
-        const tracksRes = await fetch(
-          `/api/debrid/tracks?url=${encodeURIComponent(rawUrl)}`
-        );
-        const tracksData = await tracksRes.json();
-        if (tracksRes.ok) {
-          setAudioTracks(tracksData.audio ?? []);
-          setSubtitleTracks(tracksData.subtitles ?? []);
-          const audio = tracksData.defaultAudioIndex ?? tracksData.audio?.[0]?.index ?? 0;
-          setAudioIndex(audio);
-          setSubtitleIndex(tracksData.defaultSubtitleIndex ?? null);
-          await startTranscode(rawUrl, audio, null);
-        } else {
-          setStreamUrl(proxiedUrl);
-        }
+        await applyTrackedPlayback({
+          url: rawUrl,
+          proxiedUrl,
+          useDirectPlay,
+        });
       }
 
       async function startPlexPlayback(ratingKey: string) {
@@ -194,6 +222,28 @@ export default function WatchPage() {
         if (!playRes.ok) {
           throw new Error(playData.hint || playData.error || "Failed to start playback");
         }
+
+        const baseUrl = settings.plexUrl.replace(/\/$/, "");
+        if (playData.partKey) {
+          const upstream = `${baseUrl}${playData.partKey}?X-Plex-Token=${settings.plexToken}`;
+          if (playData.mode === "direct") {
+            await applyTrackedPlayback({
+              url: upstream,
+              proxiedUrl: playData.streamUrl,
+              useDirectPlay,
+            });
+            return;
+          }
+
+          await applyTrackedPlayback({
+            url: upstream,
+            proxiedUrl: playData.streamUrl,
+            externalStreamUrl: playData.streamUrl,
+            useDirectPlay: false,
+          });
+          return;
+        }
+
         setStreamUrl(playData.streamUrl);
       }
 
@@ -287,8 +337,17 @@ export default function WatchPage() {
           }
           if (found.streamUrl?.includes("/api/plex/stream") && useDirectPlay) {
             await ensurePlexCookies(settings);
-            setStreamUrl(found.streamUrl);
             setPlexRatingKey(found.plexRatingKey ?? null);
+            if (settings.plexUrl && settings.plexToken && found.plexPartKey) {
+              const upstream = `${settings.plexUrl.replace(/\/$/, "")}${found.plexPartKey}?X-Plex-Token=${settings.plexToken}`;
+              await applyTrackedPlayback({
+                url: upstream,
+                proxiedUrl: found.streamUrl,
+                useDirectPlay,
+              });
+              return;
+            }
+            setStreamUrl(found.streamUrl);
             return;
           }
           if (found.streamUrl && !found.streamUrl.includes("/api/plex/")) {
@@ -296,7 +355,11 @@ export default function WatchPage() {
             return;
           }
           if (found.filePath) {
-            setStreamUrl(`/api/library/stream?path=${encodeURIComponent(found.filePath)}`);
+            await applyTrackedPlayback({
+              path: found.filePath,
+              proxiedUrl: `/api/library/stream?path=${encodeURIComponent(found.filePath)}`,
+              useDirectPlay,
+            });
             return;
           }
         }
@@ -305,24 +368,31 @@ export default function WatchPage() {
       setError("No stream available for this title. Add it via your library or Real-Debrid.");
     }
     load();
-  }, [id, storeSettings, plexReady, forceTranscode, startTranscode]);
+  }, [id, storeSettings, plexReady, forceTranscode, applyTrackedPlayback]);
 
   const handleAudioChange = useCallback(
     (index: number) => {
-      if (!sourceUrl) return;
+      if (!sourceUrl && !sourcePath) return;
       setAudioIndex(index);
-      startTranscode(sourceUrl, index, subtitleIndex);
+      startTranscode({ url: sourceUrl, path: sourcePath, audio: index, subtitle: subtitleIndex });
     },
-    [sourceUrl, subtitleIndex, startTranscode]
+    [sourceUrl, sourcePath, subtitleIndex, startTranscode]
   );
 
   const handleSubtitleChange = useCallback(
     (index: number | null) => {
-      if (!sourceUrl) return;
+      if (!sourceUrl && !sourcePath) return;
       setSubtitleIndex(index);
-      startTranscode(sourceUrl, audioIndex, index);
+      const settings = getEffectiveSettings(storeSettings);
+      void applyTrackedPlayback({
+        url: sourceUrl ?? undefined,
+        path: sourcePath ?? undefined,
+        proxiedUrl: proxiedStreamUrl ?? undefined,
+        useDirectPlay: Boolean(settings.directPlay) && !forceTranscode,
+        subtitleOverride: index,
+      });
     },
-    [sourceUrl, audioIndex, startTranscode]
+    [sourceUrl, sourcePath, proxiedStreamUrl, applyTrackedPlayback, storeSettings, forceTranscode]
   );
 
   const handleRequestTranscode = useCallback(() => {
@@ -337,8 +407,9 @@ export default function WatchPage() {
     !forceTranscode &&
     !!streamUrl &&
     (streamUrl.includes("/api/proxy/stream") || streamUrl.includes("/api/plex/stream"));
-  const transcodeAvailable =
-    !!sourceUrl || !!plexRatingKey || id.startsWith("plex-") || id.startsWith("tmdb-");
+  const transcodeAvailable = !!sourceUrl || !!sourcePath || !!plexRatingKey;
+  const hasTrackControls =
+    audioTracks.length > 1 || subtitleTracks.length > 0;
 
   const handleProgress = useCallback(
     (_seconds: number, percent: number) => {
@@ -379,7 +450,7 @@ export default function WatchPage() {
         <div className="h-12 w-12 animate-spin rounded-full border-4 border-white/30 border-t-white" />
         <p className="mt-4 text-sm text-netflix-light-gray">
           {transcodeLoading
-            ? "Preparing stream with audio..."
+            ? "Preparing stream with subtitles..."
             : resolveStatus || "Loading..."}
         </p>
       </div>
@@ -411,8 +482,8 @@ export default function WatchPage() {
         subtitleTracks={subtitleTracks}
         audioIndex={audioIndex}
         subtitleIndex={subtitleIndex}
-        onAudioChange={handleAudioChange}
-        onSubtitleChange={handleSubtitleChange}
+        onSubtitleChange={hasTrackControls ? handleSubtitleChange : undefined}
+        onAudioChange={hasTrackControls ? handleAudioChange : undefined}
         onRequestTranscode={handleRequestTranscode}
         transcodeAvailable={transcodeAvailable}
         isDirectPlay={isDirectPlay}
