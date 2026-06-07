@@ -1,0 +1,31 @@
+services:
+  notflix:
+    container_name: notflix
+    build: .
+    restart: unless-stopped
+    ports:
+      - "3233:3000"
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      HOSTNAME: 0.0.0.0
+      PLEX_URL: http://10.10.0.8:32800
+      LIBRARY_PATH: /media
+    volumes:
+      - /mnt/user/Media:/media:ro
+    # Uncomment for Traefik (adjust network/labels to match your stack):
+    # networks:
+    #   - traefik
+    # labels:
+    #   - traefik.enable=true
+    #   - traefik.http.routers.notflix.rule=Host(`notflix.jrtech.com`)
+    #   - traefik.http.routers.notflix.entrypoints=websecure
+    #   - traefik.http.routers.notflix.tls=true
+    #   - traefik.http.routers.notflix.tls.certresolver=letsencrypt
+    #   - traefik.http.services.notflix.loadbalancer.server.port=3000
+
+# networks:
+#   traefik:
+#     external: true

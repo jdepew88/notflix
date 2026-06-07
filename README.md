@@ -1,36 +1,200 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Notflix (Netflix Clone)
 
-## Getting Started
+A personal Netflix-style streaming app with **Plex** library integration, **Real-Debrid**, **Chromecast**, **AirPlay 2**, and a responsive UI.
 
-First, run the development server:
+**Framework:** [Next.js 16](https://nextjs.org/) (App Router, React 19, TypeScript)
+
+---
+
+## Local development (Cursor)
 
 ```bash
+npm install
+cp .env.example .env.local
+# Edit .env.local — set PLEX_URL, PLEX_TOKEN, optional API keys
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+- Dev uses `.env.local` (Next.js loads it automatically).
+- Settings can also be configured in the app UI (stored in browser localStorage).
+- Server-side env vars (`PLEX_URL`, `PLEX_TOKEN`, `LIBRARY_PATH`) are fallbacks for API routes.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+---
 
-## Learn More
+## GitHub workflow
 
-To learn more about Next.js, take a look at the following resources:
+```bash
+git add .
+git commit -m "Your message"
+git push origin main
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Never commit `.env` or `.env.local`. Only `.env.example` is tracked.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+---
 
-## Deploy on Vercel
+## unRAID deployment (Podman)
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+### 1. Clone on unRAID
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```bash
+mkdir -p /mnt/user/appdata/notflix
+cd /mnt/user/appdata/notflix
+git clone <your-repo-url> .
+```
+
+### 2. Configure environment
+
+```bash
+cp .env.example .env
+nano .env
+```
+
+Required in `.env`:
+
+```env
+PLEX_URL=http://10.10.0.8:32800
+PLEX_TOKEN=your_plex_token_here
+LIBRARY_PATH=/media
+NEXT_PUBLIC_APP_URL=http://10.10.0.8:3233
+```
+
+Get your Plex token: [Plex support docs](https://support.plex.tv/articles/204059436-finding-an-authentication-token-x-plex-token/) or Plex Web → any item → Get Info → View XML (token is in the URL).
+
+### 3. Build and run with Podman Compose
+
+```bash
+podman-compose -f compose.yaml up -d --build
+```
+
+Or manually:
+
+```bash
+podman build -t notflix .
+podman run -d \
+  --name notflix \
+  --restart unless-stopped \
+  -p 3233:3000 \
+  --env-file .env \
+  -e NODE_ENV=production \
+  -e PLEX_URL=http://10.10.0.8:32800 \
+  -e LIBRARY_PATH=/media \
+  -v /mnt/user/Media:/media:ro \
+  notflix
+```
+
+### 4. Test
+
+Open [http://10.10.0.8:3233](http://10.10.0.8:3233)
+
+Container logs show startup config (token is never printed):
+
+```bash
+podman logs notflix
+# [notflix]   PORT=3000
+# [notflix]   PLEX_URL=http://10.10.0.8:32800
+# [notflix]   LIBRARY_PATH=/media
+# [notflix]   PLEX_TOKEN=[configured]
+```
+
+### 5. Restart after updates
+
+```bash
+cd /mnt/user/appdata/notflix
+git pull
+podman-compose -f compose.yaml up -d --build
+```
+
+---
+
+## Traefik reverse proxy
+
+Add Traefik labels to `compose.yaml` (see commented section) and attach the container to your Traefik network.
+
+Example dynamic config for **notflix.jrtech.com**:
+
+```yaml
+# compose.yaml labels (uncomment and adjust)
+labels:
+  - traefik.enable=true
+  - traefik.http.routers.notflix.rule=Host(`notflix.jrtech.com`)
+  - traefik.http.routers.notflix.entrypoints=websecure
+  - traefik.http.routers.notflix.tls=true
+  - traefik.http.routers.notflix.tls.certresolver=letsencrypt
+  - traefik.http.services.notflix.loadbalancer.server.port=3000
+```
+
+Update `.env`:
+
+```env
+NEXT_PUBLIC_APP_URL=https://notflix.jrtech.com
+```
+
+When Traefik handles HTTPS, you can remove the host port mapping or keep `3233:3000` for LAN testing.
+
+---
+
+## Container layout
+
+| Setting | Value |
+|---------|-------|
+| Internal port | `3000` |
+| Host port | `3233` |
+| Media mount | `/mnt/user/Media` → `/media:ro` |
+| `LIBRARY_PATH` | `/media` |
+| `PLEX_URL` | `http://10.10.0.8:32800` |
+| `PLEX_TOKEN` | From `.env` only |
+
+---
+
+## Configuration reference
+
+| Variable | Description |
+|----------|-------------|
+| `PORT` | Server port (default `3000`) |
+| `HOSTNAME` | Bind address (default `0.0.0.0` in container) |
+| `PLEX_URL` | Plex server URL |
+| `PLEX_TOKEN` | Plex API token (secret) |
+| `LIBRARY_PATH` | NFS/media path (`/media` in production) |
+| `TMDB_API_KEY` | Optional browse metadata |
+| `TVDB_API_KEY` | Optional TV metadata |
+| `REAL_DEBRID_TOKEN` | Optional Debrid streams |
+| `NEXT_PUBLIC_APP_URL` | Public app URL for links |
+
+---
+
+## Features
+
+- **Plex** — Direct play from your library with genre browse rows
+- **Real-Debrid** — Magnet links with ffmpeg audio transcode
+- **NFS fallback** — Scan `LIBRARY_PATH` when Plex is not configured
+- **Chromecast / AirPlay** — From the video player
+
+---
+
+## Scripts
+
+| Command | Description |
+|---------|-------------|
+| `npm run dev` | Development server (localhost:3000) |
+| `npm run build` | Production build (standalone output) |
+| `npm start` | Production server on `0.0.0.0:$PORT` |
+
+---
+
+## Project structure
+
+```
+src/
+├── app/           # Next.js App Router pages & API routes
+├── components/    # UI, player, browse
+├── lib/           # Plex, Debrid, env, settings
+├── instrumentation.ts  # Startup logging
+Dockerfile
+compose.yaml
+.env.example
+```
+
+Private / personal use.

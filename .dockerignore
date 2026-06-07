@@ -1,0 +1,22 @@
+node_modules
+.next
+out
+.git
+.gitignore
+.cache
+*.tsbuildinfo
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Secrets — never copy into the image
+.env
+.env.local
+.env.*.local
+
+# Dev / editor
+.vscode
+.cursor
+coverage
+README.md
