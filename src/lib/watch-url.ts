@@ -1,5 +1,14 @@
 import type { MediaItem } from "./types";
 
+export function isSeriesItem(item: MediaItem): boolean {
+  return (
+    item.type === "series" ||
+    item.mediaType === "tv" ||
+    item.id.startsWith("tmdb-tv-") ||
+    item.id.startsWith("series-")
+  );
+}
+
 export function watchIdForItem(item: MediaItem): string {
   if (item.type === "episode" && item.seriesId) return item.seriesId;
   return item.id;
@@ -9,7 +18,7 @@ export function watchHrefForItem(item: MediaItem): string {
   const base = `/watch/${encodeURIComponent(watchIdForItem(item))}`;
   const params = new URLSearchParams();
 
-  if (item.type === "series") {
+  if (isSeriesItem(item)) {
     params.set("type", "series");
     if (item.tmdbId) params.set("tmdbId", String(item.tmdbId));
     if (item.title) params.set("title", item.title);

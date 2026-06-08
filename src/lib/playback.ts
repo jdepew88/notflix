@@ -1,4 +1,5 @@
 import type { MediaItem } from "./types";
+import { watchHrefForItem } from "./watch-url";
 
 export function canPlayItem(item: MediaItem): boolean {
   return (
@@ -17,5 +18,5 @@ export function canPlayItem(item: MediaItem): boolean {
 }
 
 export function watchHref(item: MediaItem): string {
-  return `/watch/${encodeURIComponent(item.id)}`;
+  return watchHrefForItem(item);
 }

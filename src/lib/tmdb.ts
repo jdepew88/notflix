@@ -337,6 +337,21 @@ export async function getSimilarMovies(apiKey: string, id: number): Promise<Medi
   return data.results.map(toMediaItem);
 }
 
+export async function getTvVideos(apiKey: string, id: number): Promise<string | null> {
+  const data = await tmdbFetch<{
+    results: Array<{ key: string; site: string; type: string }>;
+  }>(`/tv/${id}/videos`, apiKey);
+  const trailer = data.results.find(
+    (v) => v.site === "YouTube" && (v.type === "Trailer" || v.type === "Teaser")
+  );
+  return trailer?.key ?? null;
+}
+
+export async function getSimilarTv(apiKey: string, id: number): Promise<MediaItem[]> {
+  const data = await tmdbFetch<TmdbTvResponse>(`/tv/${id}/similar`, apiKey);
+  return data.results.map(toTvMediaItem);
+}
+
 export async function getGenres(apiKey: string): Promise<Array<{ id: number; name: string }>> {
   const data = await tmdbFetch<{ genres: Array<{ id: number; name: string }> }>(
     "/genre/movie/list",

@@ -3,17 +3,25 @@
 import { useEffect, useRef, useState } from "react";
 import { MediaImage } from "@/components/ui/MediaImage";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, Play, Plus, ThumbsUp, Volume2, VolumeX, Check } from "lucide-react";
+import { X, Play, Plus, ThumbsUp, Volume2, VolumeX, Check, ListVideo } from "lucide-react";
 import { useDetailModal } from "@/providers/DetailModalProvider";
 import { useAppStore, isInMyList } from "@/lib/store";
 import { fetchWithSettings } from "@/lib/client-settings";
 import { backdropUrl, posterUrl } from "@/lib/tmdb";
-import { watchHrefForItem } from "@/lib/watch-url";
+import {
+  isSeriesItem,
+  watchHrefForEpisode,
+  watchHrefForItem,
+  watchIdForItem,
+} from "@/lib/watch-url";
+import { EpisodeBrowser } from "@/components/player/EpisodeBrowser";
 import { TitleCard } from "./TitleCard";
 import type { MediaItem } from "@/lib/types";
 
 export function DetailModal() {
+  const router = useRouter();
   const { open, item, closeDetail } = useDetailModal();
   const addToMyList = useAppStore((s) => s.addToMyList);
   const removeFromMyList = useAppStore((s) => s.removeFromMyList);
@@ -36,13 +44,19 @@ export function DetailModal() {
       if (!item) return;
       const tmdbId =
         item.tmdbId ??
-        (item.id.startsWith("tmdb-") ? parseInt(item.id.replace("tmdb-", ""), 10) : null);
+        (item.id.match(/^tmdb-(?:tv-)?(\d+)$/)
+          ? parseInt(item.id.replace(/^tmdb-(?:tv-)?/, ""), 10)
+          : null);
+      const isTv = isSeriesItem(item);
 
       if (tmdbId && !plexOnly) {
+        const detailType = isTv ? "tv_details" : "details";
+        const similarType = isTv ? "tv_similar" : "similar";
+        const videoType = isTv ? "tv_videos" : "videos";
         const [detailRes, similarRes, videoRes] = await Promise.all([
-          fetch(`/api/catalog?type=details&id=${tmdbId}`),
-          fetch(`/api/catalog?type=similar&id=${tmdbId}`),
-          fetch(`/api/catalog?type=videos&id=${tmdbId}`),
+          fetch(`/api/catalog?type=${detailType}&id=${tmdbId}`),
+          fetch(`/api/catalog?type=${similarType}&id=${tmdbId}`),
+          fetch(`/api/catalog?type=${videoType}&id=${tmdbId}`),
         ]);
 
         if (detailRes.ok) {
@@ -95,6 +109,20 @@ export function DetailModal() {
 
   const backdrop = backdropUrl(display.backdropPath);
   const inList = isInMyList(display.id);
+  const isSeries = isSeriesItem(display);
+
+  const playEpisode = (season: number, episode: number) => {
+    closeDetail();
+    router.push(
+      watchHrefForEpisode({
+        watchId: watchIdForItem(display),
+        tmdbId: display.tmdbId,
+        title: display.title,
+        season,
+        episode,
+      })
+    );
+  };
 
   return (
     <AnimatePresence>
@@ -151,13 +179,23 @@ export function DetailModal() {
               <div className="absolute bottom-6 left-6 right-6">
                 <h2 className="mb-4 text-2xl font-bold md:text-4xl">{display.title}</h2>
                 <div className="flex flex-wrap gap-3">
-                  <Link
-                    href={watchHrefForItem(display)}
-                    className="flex items-center gap-2 rounded bg-white px-6 py-2 font-semibold text-black hover:bg-white/80"
-                  >
-                    <Play className="h-5 w-5 fill-current" />
-                    Play
-                  </Link>
+                  {isSeries ? (
+                    <a
+                      href="#episodes"
+                      className="flex items-center gap-2 rounded bg-white px-6 py-2 font-semibold text-black hover:bg-white/80"
+                    >
+                      <ListVideo className="h-5 w-5" />
+                      Episodes
+                    </a>
+                  ) : (
+                    <Link
+                      href={watchHrefForItem(display)}
+                      className="flex items-center gap-2 rounded bg-white px-6 py-2 font-semibold text-black hover:bg-white/80"
+                    >
+                      <Play className="h-5 w-5 fill-current" />
+                      Play
+                    </Link>
+                  )}
                   <button
                     type="button"
                     onClick={() =>
@@ -202,6 +240,20 @@ export function DetailModal() {
                 )}
               </div>
             </div>
+
+            {isSeries && (
+              <div id="episodes" className="px-6 pb-6">
+                <h3 className="mb-4 text-xl font-semibold">Episodes</h3>
+                <EpisodeBrowser
+                  title={display.title}
+                  poster={posterUrl(display.posterPath, "w500")}
+                  tmdbId={display.tmdbId}
+                  seriesId={watchIdForItem(display)}
+                  onSelect={playEpisode}
+                  layout="embedded"
+                />
+              </div>
+            )}
 
             {similar.length > 0 && (
               <div className="px-6 pb-6">

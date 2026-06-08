@@ -3,16 +3,23 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { MediaImage } from "@/components/ui/MediaImage";
-import { useParams } from "next/navigation";
-import { Play, Plus, Check, ArrowLeft } from "lucide-react";
+import { useParams, useRouter } from "next/navigation";
+import { Play, Plus, Check, ArrowLeft, ListVideo } from "lucide-react";
 import { posterUrl, backdropUrl } from "@/lib/tmdb";
-import { watchHrefForItem } from "@/lib/watch-url";
+import {
+  isSeriesItem,
+  watchHrefForEpisode,
+  watchHrefForItem,
+  watchIdForItem,
+} from "@/lib/watch-url";
+import { EpisodeBrowser } from "@/components/player/EpisodeBrowser";
 import { useAppStore, isInMyList } from "@/lib/store";
 import { fetchWithSettings } from "@/lib/client-settings";
 import type { MediaItem } from "@/lib/types";
 
 export default function TitleDetailPage() {
   const params = useParams();
+  const router = useRouter();
   const id = decodeURIComponent(params.id as string);
   const [item, setItem] = useState<MediaItem | null>(null);
   const addToMyList = useAppStore((s) => s.addToMyList);
@@ -69,6 +76,7 @@ export default function TitleDetailPage() {
 
   const backdrop = backdropUrl(item.backdropPath);
   const poster = posterUrl(item.posterPath, "w500");
+  const isSeries = isSeriesItem(item);
 
   return (
     <div className="min-h-screen">
@@ -107,13 +115,23 @@ export default function TitleDetailPage() {
             </div>
 
             <div className="mb-6 flex flex-wrap gap-3">
-              <Link
-                href={watchHrefForItem(item)}
-                className="flex items-center gap-2 rounded bg-white px-6 py-2.5 font-semibold text-black hover:bg-white/80"
-              >
-                <Play className="h-5 w-5 fill-current" />
-                Play
-              </Link>
+              {isSeries ? (
+                <a
+                  href="#episodes"
+                  className="flex items-center gap-2 rounded bg-white px-6 py-2.5 font-semibold text-black hover:bg-white/80"
+                >
+                  <ListVideo className="h-5 w-5" />
+                  Episodes
+                </a>
+              ) : (
+                <Link
+                  href={watchHrefForItem(item)}
+                  className="flex items-center gap-2 rounded bg-white px-6 py-2.5 font-semibold text-black hover:bg-white/80"
+                >
+                  <Play className="h-5 w-5 fill-current" />
+                  Play
+                </Link>
+              )}
               <button
                 type="button"
                 onClick={() => (inList ? removeFromMyList(id) : addToMyList(id))}
@@ -128,6 +146,30 @@ export default function TitleDetailPage() {
               <p className="max-w-3xl text-base leading-relaxed text-white md:text-lg">
                 {item.overview}
               </p>
+            )}
+
+            {isSeries && (
+              <div id="episodes" className="mt-10">
+                <h2 className="mb-4 text-2xl font-semibold">Episodes</h2>
+                <EpisodeBrowser
+                  title={item.title}
+                  poster={poster}
+                  tmdbId={item.tmdbId}
+                  seriesId={watchIdForItem(item)}
+                  onSelect={(season, episode) => {
+                    router.push(
+                      watchHrefForEpisode({
+                        watchId: watchIdForItem(item),
+                        tmdbId: item.tmdbId,
+                        title: item.title,
+                        season,
+                        episode,
+                      })
+                    );
+                  }}
+                  layout="embedded"
+                />
+              </div>
             )}
           </div>
         </div>

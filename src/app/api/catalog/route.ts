@@ -13,6 +13,9 @@ import {
   getMovieDetails,
   getMovieVideos,
   getSimilarMovies,
+  getTvDetails,
+  getTvVideos,
+  getSimilarTv,
   getGenres,
   getMoviesByGenre,
   enrichItemsWithWatchProviders,
@@ -70,13 +73,46 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ item: enriched });
     }
 
+    if (type === "tv_details" && id) {
+      const show = await getTvDetails(apiKey, parseInt(id, 10));
+      const item: MediaItem = {
+        id: `tmdb-tv-${show.id}`,
+        tmdbId: show.id,
+        mediaType: "tv",
+        title: show.name,
+        overview: show.overview,
+        posterPath: show.poster_path ?? undefined,
+        backdropPath: show.backdrop_path ?? undefined,
+        releaseDate: show.first_air_date,
+        rating: show.vote_average,
+        genres: show.genres.map((g) => g.name),
+        genreIds: show.genres.map((g) => g.id),
+        type: "series",
+        source: "tmdb",
+      };
+      const [enriched] = await withWatchProviders([item], apiKey, country);
+      return NextResponse.json({ item: enriched });
+    }
+
     if (type === "videos" && id) {
       const key = await getMovieVideos(apiKey, parseInt(id, 10));
       return NextResponse.json({ key });
     }
 
+    if (type === "tv_videos" && id) {
+      const key = await getTvVideos(apiKey, parseInt(id, 10));
+      return NextResponse.json({ key });
+    }
+
     if (type === "similar" && id) {
       const items = await getSimilarMovies(apiKey, parseInt(id, 10));
+      return NextResponse.json({
+        items: await withWatchProviders(items, apiKey, country),
+      });
+    }
+
+    if (type === "tv_similar" && id) {
+      const items = await getSimilarTv(apiKey, parseInt(id, 10));
       return NextResponse.json({
         items: await withWatchProviders(items, apiKey, country),
       });

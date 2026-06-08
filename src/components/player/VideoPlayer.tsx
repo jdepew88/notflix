@@ -15,6 +15,8 @@ import {
   Airplay,
   Subtitles,
   Gauge,
+  ListVideo,
+  ChevronRight,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { useCast } from "@/hooks/useCast";
@@ -60,6 +62,14 @@ interface VideoPlayerProps {
   plexUrl?: string;
   qualityHint?: string | null;
   streamInfo?: StreamPlaybackInfo;
+  seriesPlayback?: {
+    season: number;
+    episode: number;
+    hasNextEpisode: boolean;
+    onNextEpisode?: () => void;
+    onOpenEpisodes?: () => void;
+  };
+  trackSwitching?: boolean;
 }
 
 function formatTime(seconds: number): string {
@@ -91,6 +101,8 @@ export function VideoPlayer({
   plexUrl,
   qualityHint,
   streamInfo,
+  seriesPlayback,
+  trackSwitching,
 }: VideoPlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -253,6 +265,42 @@ export function VideoPlayer({
     if (hls) applyHlsBufferTier(hls, tier);
   }, []);
 
+  const resolveHlsSubtitleTrackIndex = useCallback(
+    (hls: Hls, streamIndex: number | null): number => {
+      if (streamIndex === null) return -1;
+      if (!hls.subtitleTracks.length) return -1;
+
+      const byId = hls.subtitleTracks.findIndex((t) => t.id === streamIndex);
+      if (byId >= 0) return byId;
+
+      const probeTrack = subtitleTracks.find((t) => t.index === streamIndex);
+      if (probeTrack) {
+        const byLang = hls.subtitleTracks.findIndex((t) => {
+          const lang = (t.lang || t.name || "").toLowerCase();
+          const probeLang = (probeTrack.language || probeTrack.title || "").toLowerCase();
+          return probeLang && (lang === probeLang || lang.startsWith(probeLang.slice(0, 2)));
+        });
+        if (byLang >= 0) return byLang;
+      }
+
+      const englishIdx = hls.subtitleTracks.findIndex((t) =>
+        /en|english/i.test(t.name || t.lang || "")
+      );
+      return englishIdx >= 0 ? englishIdx : 0;
+    },
+    [subtitleTracks]
+  );
+
+  const applyHlsSubtitleSelection = useCallback(
+    (hls: Hls, streamIndex: number | null) => {
+      if (!hls.subtitleTracks.length || externalSubEnabled) return;
+      hls.subtitleDisplay = streamIndex !== null;
+      hls.subtitleTrack =
+        streamIndex === null ? -1 : resolveHlsSubtitleTrackIndex(hls, streamIndex);
+    },
+    [externalSubEnabled, resolveHlsSubtitleTrackIndex]
+  );
+
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
@@ -269,18 +317,7 @@ export function VideoPlayer({
         if (maxHeight > 0) {
           updateBufferTier(qualityTierFromHeight(maxHeight));
         }
-        if (hls.subtitleTracks.length > 0 && !externalSubEnabled) {
-          hls.subtitleDisplay = subtitleIndex !== null;
-          if (subtitleIndex !== null) {
-            const byStreamId = hls.subtitleTracks.findIndex((t) => t.id === subtitleIndex);
-            const englishIdx = hls.subtitleTracks.findIndex((t) =>
-              /en|english/i.test(t.name || t.lang || "")
-            );
-            const idx =
-              byStreamId >= 0 ? byStreamId : englishIdx >= 0 ? englishIdx : 0;
-            hls.subtitleTrack = idx;
-          }
-        }
+        applyHlsSubtitleSelection(hls, subtitleIndex);
         void attemptAutoplay();
       });
       hls.on(Hls.Events.ERROR, (_event, data) => {
@@ -306,36 +343,13 @@ export function VideoPlayer({
       video.removeAttribute("src");
       video.load();
     };
-  }, [
-    playbackSrc,
-    isHls,
-    useNativeHls,
-    subtitleIndex,
-    qualityHint,
-    updateBufferTier,
-    attemptAutoplay,
-    externalSubEnabled,
-  ]);
+  }, [playbackSrc, isHls, useNativeHls, qualityHint, updateBufferTier, attemptAutoplay]);
 
   useEffect(() => {
     const hls = hlsRef.current;
-    if (!hls || !hls.subtitleTracks.length || externalSubEnabled) return;
-    hls.subtitleDisplay = subtitleIndex !== null;
-    if (subtitleIndex === null) {
-      hls.subtitleTrack = -1;
-      return;
-    }
-    const byStreamId = hls.subtitleTracks.findIndex((t) => t.id === subtitleIndex);
-    const englishIdx = hls.subtitleTracks.findIndex((t) =>
-      /en|english/i.test(t.name || t.lang || "")
-    );
-    hls.subtitleTrack = byStreamId >= 0 ? byStreamId : englishIdx >= 0 ? englishIdx : 0;
-  }, [subtitleIndex, externalSubEnabled]);
-
-  useEffect(() => {
-    const hls = hlsRef.current;
-    if (hls) hls.subtitleDisplay = externalSubEnabled ? false : subtitleIndex !== null;
-  }, [externalSubEnabled, subtitleIndex]);
+    if (!hls) return;
+    applyHlsSubtitleSelection(hls, subtitleIndex);
+  }, [subtitleIndex, externalSubEnabled, applyHlsSubtitleSelection]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -647,14 +661,16 @@ export function VideoPlayer({
         </div>
       )}
 
-      {(buffering || initialBuffering) && (
-        <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-3">
+      {(buffering || initialBuffering || trackSwitching) && (
+        <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/40">
           <div className="h-12 w-12 animate-spin rounded-full border-4 border-white/30 border-t-white" />
-          {initialBuffering && (
-            <p className="text-sm text-netflix-light-gray">
-              Buffering ahead for smooth playback…
-            </p>
-          )}
+          <p className="text-sm text-netflix-light-gray">
+            {trackSwitching
+              ? "Updating audio or subtitles…"
+              : initialBuffering
+                ? "Buffering ahead for smooth playback…"
+                : "Buffering…"}
+          </p>
         </div>
       )}
 
@@ -686,12 +702,34 @@ export function VideoPlayer({
               <button type="button" onClick={() => void togglePlay()} className="text-white hover:text-netflix-light-gray">
                 {playing ? <Pause className="h-7 w-7 md:h-8 md:w-8" /> : <Play className="h-7 w-7 fill-current md:h-8 md:w-8" />}
               </button>
-              <button type="button" onClick={() => skip(-10)} className="hidden text-white hover:text-netflix-light-gray sm:block">
+              <button
+                type="button"
+                onClick={() => skip(-10)}
+                className="hidden text-white hover:text-netflix-light-gray sm:block"
+                title="Back 10 seconds"
+              >
                 <SkipBack className="h-5 w-5" />
               </button>
-              <button type="button" onClick={() => skip(10)} className="hidden text-white hover:text-netflix-light-gray sm:block">
-                <SkipForward className="h-5 w-5" />
-              </button>
+              {seriesPlayback?.hasNextEpisode && seriesPlayback.onNextEpisode ? (
+                <button
+                  type="button"
+                  onClick={seriesPlayback.onNextEpisode}
+                  className="hidden items-center gap-1 text-white hover:text-netflix-light-gray sm:flex"
+                  title="Next episode"
+                >
+                  <ChevronRight className="h-6 w-6" />
+                  <span className="text-xs font-medium">Next Ep</span>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => skip(10)}
+                  className="hidden text-white hover:text-netflix-light-gray sm:block"
+                  title="Forward 10 seconds"
+                >
+                  <SkipForward className="h-5 w-5" />
+                </button>
+              )}
 
               <div className="relative">
                 <button
@@ -772,6 +810,18 @@ export function VideoPlayer({
             </div>
 
             <div className="flex items-center gap-3">
+              {seriesPlayback?.onOpenEpisodes && (
+                <button
+                  type="button"
+                  onClick={seriesPlayback.onOpenEpisodes}
+                  className="flex items-center gap-1 text-white hover:text-netflix-light-gray"
+                  title="Episodes"
+                >
+                  <ListVideo className="h-5 w-5" />
+                  <span className="hidden text-xs md:inline">Episodes</span>
+                </button>
+              )}
+
               {(onSubtitleChange || subtitleTracks.length > 0 || externalSubUrl) && (
                 <button
                   type="button"

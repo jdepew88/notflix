@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { X } from "lucide-react";
 import { VideoPlayer } from "@/components/player/VideoPlayer";
@@ -20,17 +20,13 @@ import { libraryStreamUrl, mappedLibraryFilePath } from "@/lib/library-playback"
 import { isLegacyVideoExtension } from "@/lib/video-formats";
 import { readJsonResponse } from "@/lib/fetch-json";
 import { formatEpisodeLabel } from "@/lib/episode-parse";
-
-function parseWatchTmdbId(watchId: string, searchParams: URLSearchParams): number | undefined {
-  const fromQuery = searchParams.get("tmdbId");
-  if (fromQuery) {
-    const n = parseInt(fromQuery, 10);
-    return Number.isFinite(n) ? n : undefined;
-  }
-  const match = watchId.match(/^tmdb-(?:tv-)?(\d+)$/);
-  if (match) return parseInt(match[1], 10);
-  return undefined;
-}
+import type { SeasonGroup } from "@/lib/episode-library";
+import {
+  getNextEpisode,
+  hasSeasonEpisode,
+  parseWatchTmdbId,
+  resolveWatchMediaType,
+} from "@/lib/episode-nav";
 
 function buildPlayQuery(opts: {
   tmdbId: number;
@@ -82,7 +78,10 @@ export default function WatchPage() {
     tmdbId?: number;
     seriesId: string;
     poster?: string;
+    overlay?: boolean;
   } | null>(null);
+  const [seriesSeasons, setSeriesSeasons] = useState<SeasonGroup[]>([]);
+  const proxiedStreamUrlRef = useRef<string | null>(null);
   const updateProgress = useAppStore((s) => s.updateProgress);
   const progress = getMediaProgress(id);
   const storeSettings = useAppStore((s) => s.settings);
@@ -252,7 +251,10 @@ export default function WatchPage() {
       setSourceUrl(opts.url ?? null);
       setSourcePath(opts.path ?? null);
       setStreamSession(opts.session ?? null);
-      if (opts.proxiedUrl) setProxiedStreamUrl(opts.proxiedUrl);
+      if (opts.proxiedUrl) {
+        setProxiedStreamUrl(opts.proxiedUrl);
+        proxiedStreamUrlRef.current = opts.proxiedUrl;
+      }
 
       if (opts.debridDirectPlay && opts.proxiedUrl) {
         if (subtitle !== null) {
@@ -273,8 +275,9 @@ export default function WatchPage() {
       const canDirectPlay =
         opts.useDirectPlay && !tracksData.needsTranscode && !needsSubTranscode;
 
-      if (canDirectPlay && (opts.proxiedUrl ?? proxiedStreamUrl)) {
-        setStreamUrl(opts.proxiedUrl ?? proxiedStreamUrl!);
+      const cachedProxied = opts.proxiedUrl ?? proxiedStreamUrlRef.current;
+      if (canDirectPlay && cachedProxied) {
+        setStreamUrl(cachedProxied);
         return;
       }
 
@@ -295,7 +298,7 @@ export default function WatchPage() {
         subtitle,
       });
     },
-    [startTranscode, startRemux, proxiedStreamUrl, fetchMediaTracks]
+    [startTranscode, startRemux, fetchMediaTracks]
   );
 
   const playRemoteStream = useCallback(
@@ -388,13 +391,13 @@ export default function WatchPage() {
       setStreamQuality(null);
       setIsDebridPlayback(false);
       setStreamSession(null);
-      setEpisodePickerShow(null);
       setError("");
 
       const settings = getEffectiveSettings(storeSettings);
       const useDirectPlay = Boolean(settings.directPlay) && !forceTranscode;
       const plexMode = useDirectPlay ? "direct" : "transcode";
-      const typeParam = (searchParams.get("type") ?? "movie") as "movie" | "series";
+      const typeParam = searchParams.get("type");
+      const mediaType = resolveWatchMediaType(typeParam, id);
       const seasonNum = searchParams.get("season")
         ? parseInt(searchParams.get("season")!, 10)
         : undefined;
@@ -402,6 +405,11 @@ export default function WatchPage() {
         ? parseInt(searchParams.get("episode")!, 10)
         : undefined;
       const tmdbIdFromWatch = parseWatchTmdbId(id, searchParams);
+      const seasonEpisodeReady = hasSeasonEpisode(seasonNum, episodeNum);
+
+      if (mediaType === "series" && !seasonEpisodeReady) {
+        setEpisodePickerShow(null);
+      }
 
       let lookupId = id;
       if (id.startsWith("series-")) {
@@ -526,13 +534,7 @@ export default function WatchPage() {
         }
       }
 
-      if (
-        typeParam === "series" &&
-        (seasonNum == null ||
-          episodeNum == null ||
-          !Number.isFinite(seasonNum) ||
-          !Number.isFinite(episodeNum))
-      ) {
+      if (mediaType === "series" && !seasonEpisodeReady) {
         let showTitle = searchParams.get("title") || "TV Show";
         let poster: string | undefined;
 
@@ -561,14 +563,10 @@ export default function WatchPage() {
 
       if (
         tmdbIdFromWatch &&
-        (typeParam !== "series" ||
-          (seasonNum != null &&
-            episodeNum != null &&
-            Number.isFinite(seasonNum) &&
-            Number.isFinite(episodeNum)))
+        (mediaType !== "series" || seasonEpisodeReady)
       ) {
         const tmdbId = tmdbIdFromWatch;
-        const type = typeParam;
+        const type = mediaType;
         const season = seasonNum;
         const episode = episodeNum;
 
@@ -661,12 +659,7 @@ export default function WatchPage() {
         const data = await libraryRes.json();
         const items = (data.items ?? []) as MediaItem[];
 
-        if (
-          seasonNum != null &&
-          episodeNum != null &&
-          Number.isFinite(seasonNum) &&
-          Number.isFinite(episodeNum)
-        ) {
+        if (seasonEpisodeReady) {
           const episodeItem = items.find(
             (i) =>
               i.type === "episode" &&
@@ -693,10 +686,7 @@ export default function WatchPage() {
 
         const found = items.find((i: MediaItem) => i.id === lookupId);
         if (found) {
-          if (
-            found.type === "series" &&
-            (seasonNum == null || episodeNum == null)
-          ) {
+          if (found.type === "series" && !seasonEpisodeReady) {
             setEpisodePickerShow({
               title: found.title,
               tmdbId: found.tmdbId,
@@ -770,24 +760,101 @@ export default function WatchPage() {
       setError("No stream available for this title. Add it via your library or Real-Debrid.");
     }
     load();
-  }, [id, searchParams, storeSettings, plexReady, forceTranscode, applyTrackedPlayback, router]);
+  }, [id, searchParams.toString(), plexReady, forceTranscode, storeSettings, applyTrackedPlayback, router]);
 
-  const handleEpisodeSelect = useCallback(
+  const seriesWatchId = id;
+  const watchMediaType = resolveWatchMediaType(searchParams.get("type"), id);
+  const watchSeason = searchParams.get("season")
+    ? parseInt(searchParams.get("season")!, 10)
+    : undefined;
+  const watchEpisode = searchParams.get("episode")
+    ? parseInt(searchParams.get("episode")!, 10)
+    : undefined;
+  const watchTmdbId = parseWatchTmdbId(id, searchParams);
+  const inSeriesPlayback =
+    watchMediaType === "series" && hasSeasonEpisode(watchSeason, watchEpisode);
+
+  useEffect(() => {
+    if (!inSeriesPlayback) {
+      setSeriesSeasons([]);
+      return;
+    }
+
+    let cancelled = false;
+    const params = new URLSearchParams();
+    if (watchTmdbId) params.set("tmdbId", String(watchTmdbId));
+    params.set("seriesId", seriesWatchId);
+    params.set("title", item?.title ?? searchParams.get("title") ?? "TV Show");
+
+    void fetch(`/api/play/episodes?${params}`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!cancelled && data?.seasons) {
+          setSeriesSeasons(data.seasons as SeasonGroup[]);
+        }
+      })
+      .catch(() => undefined);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    inSeriesPlayback,
+    watchTmdbId,
+    seriesWatchId,
+    item?.title,
+    searchParams,
+  ]);
+
+  const navigateToEpisode = useCallback(
     (season: number, episode: number) => {
       const params = new URLSearchParams(searchParams.toString());
       params.set("type", "series");
       params.set("season", String(season));
       params.set("episode", String(episode));
-      if (episodePickerShow?.tmdbId) {
-        params.set("tmdbId", String(episodePickerShow.tmdbId));
-      }
-      if (episodePickerShow?.title) {
-        params.set("title", episodePickerShow.title);
-      }
+      const showTitle =
+        episodePickerShow?.title ?? searchParams.get("title") ?? item?.title;
+      if (watchTmdbId) params.set("tmdbId", String(watchTmdbId));
+      if (showTitle) params.set("title", showTitle);
+      setEpisodePickerShow(null);
+      setStreamUrl(null);
       router.replace(`/watch/${encodeURIComponent(id)}?${params.toString()}`);
     },
-    [searchParams, episodePickerShow, id, router]
+    [
+      searchParams,
+      episodePickerShow?.title,
+      watchTmdbId,
+      item?.title,
+      id,
+      router,
+    ]
   );
+
+  const handleEpisodeSelect = useCallback(
+    (season: number, episode: number) => {
+      navigateToEpisode(season, episode);
+    },
+    [navigateToEpisode]
+  );
+
+  const nextEpisode =
+    inSeriesPlayback && watchSeason != null && watchEpisode != null
+      ? getNextEpisode(seriesSeasons, watchSeason, watchEpisode)
+      : null;
+
+  const handleNextEpisode = useCallback(() => {
+    if (nextEpisode) navigateToEpisode(nextEpisode.season, nextEpisode.episode);
+  }, [nextEpisode, navigateToEpisode]);
+
+  const handleOpenEpisodeList = useCallback(() => {
+    setEpisodePickerShow({
+      title: searchParams.get("title") ?? item?.title ?? "TV Show",
+      tmdbId: watchTmdbId,
+      seriesId: seriesWatchId,
+      poster: posterUrl(item?.posterPath, "w500"),
+      overlay: true,
+    });
+  }, [searchParams, item, watchTmdbId, seriesWatchId]);
 
   const handleAudioChange = useCallback(
     (index: number) => {
@@ -818,13 +885,15 @@ export default function WatchPage() {
     (index: number | null) => {
       if (!sourceUrl && !sourcePath && !streamSession) return;
       setSubtitleIndex(index);
+      const proxied = proxiedStreamUrlRef.current ?? proxiedStreamUrl;
+
       if (isDebridPlayback) {
-        if (index === null && proxiedStreamUrl) {
-          setStreamUrl(proxiedStreamUrl);
+        if (index === null && proxied) {
+          setStreamUrl(proxied);
           setError("");
           return;
         }
-        startRemux({
+        void startRemux({
           session: streamSession,
           url: sourceUrl,
           path: sourcePath,
@@ -833,14 +902,19 @@ export default function WatchPage() {
         });
         return;
       }
-      const settings = getEffectiveSettings(storeSettings);
-      void applyTrackedPlayback({
+
+      if (index === null && proxied) {
+        setStreamUrl(proxied);
+        setError("");
+        return;
+      }
+
+      void startTranscode({
         session: streamSession,
-        url: sourceUrl ?? undefined,
-        path: sourcePath ?? undefined,
-        proxiedUrl: proxiedStreamUrl ?? undefined,
-        useDirectPlay: Boolean(settings.directPlay) && !forceTranscode,
-        subtitleOverride: index,
+        url: sourceUrl,
+        path: sourcePath,
+        audio: audioIndex,
+        subtitle: index,
       });
     },
     [
@@ -849,11 +923,9 @@ export default function WatchPage() {
       streamSession,
       audioIndex,
       proxiedStreamUrl,
-      applyTrackedPlayback,
-      storeSettings,
-      forceTranscode,
       isDebridPlayback,
       startRemux,
+      startTranscode,
     ]
   );
 
@@ -887,7 +959,7 @@ export default function WatchPage() {
     );
   }
 
-  if (episodePickerShow) {
+  if (episodePickerShow && !episodePickerShow.overlay) {
     return (
       <EpisodePicker
         title={episodePickerShow.title}
@@ -938,20 +1010,23 @@ export default function WatchPage() {
     );
   }
 
-  if (!streamUrl || !item || transcodeLoading) {
+  if (!streamUrl || !item) {
     return (
       <div className="flex h-screen flex-col items-center justify-center bg-black">
         <div className="h-12 w-12 animate-spin rounded-full border-4 border-white/30 border-t-white" />
         <p className="mt-4 text-sm text-netflix-light-gray">
           {transcodeLoading
-            ? isDebridPlayback
-              ? "Switching audio or subtitles..."
-              : "Preparing stream with subtitles..."
+            ? "Preparing playback…"
             : resolveStatus || "Loading..."}
         </p>
       </div>
     );
   }
+
+  const playerTitle =
+    inSeriesPlayback && watchSeason != null && watchEpisode != null
+      ? `${searchParams.get("title") ?? item.title} · ${formatEpisodeLabel(watchSeason, watchEpisode)}`
+      : item.title;
 
   return (
     <div className="fixed inset-0 z-50 bg-black">
@@ -970,10 +1045,11 @@ export default function WatchPage() {
       )}
       <VideoPlayer
         src={streamUrl}
-        title={item.title}
+        title={playerTitle}
         poster={posterUrl(item.posterPath, "w780")}
         initialProgress={progress}
         onProgress={handleProgress}
+        onEnded={nextEpisode ? handleNextEpisode : undefined}
         audioTracks={audioTracks}
         subtitleTracks={subtitleTracks}
         audioIndex={audioIndex}
@@ -987,6 +1063,18 @@ export default function WatchPage() {
         plexRatingKey={plexRatingKey ?? undefined}
         plexUrl={settings.plexUrl}
         qualityHint={streamQuality}
+        trackSwitching={transcodeLoading}
+        seriesPlayback={
+          inSeriesPlayback && watchSeason != null && watchEpisode != null
+            ? {
+                season: watchSeason,
+                episode: watchEpisode,
+                hasNextEpisode: Boolean(nextEpisode),
+                onNextEpisode: nextEpisode ? handleNextEpisode : undefined,
+                onOpenEpisodes: handleOpenEpisodeList,
+              }
+            : undefined
+        }
         streamInfo={{
           streamUrl,
           sourceUrl,
@@ -996,6 +1084,20 @@ export default function WatchPage() {
           ...streamProbe,
         }}
       />
+
+      {episodePickerShow?.overlay && (
+        <EpisodePicker
+          title={episodePickerShow.title}
+          poster={episodePickerShow.poster}
+          tmdbId={episodePickerShow.tmdbId}
+          seriesId={episodePickerShow.seriesId}
+          currentSeason={watchSeason}
+          currentEpisode={watchEpisode}
+          overlay
+          onSelect={handleEpisodeSelect}
+          onCancel={() => setEpisodePickerShow(null)}
+        />
+      )}
     </div>
   );
 }
