@@ -20,6 +20,21 @@ export function normalizeStremioBaseUrl(url: string): string {
     .replace(/\/$/, "");
 }
 
+/** Append Torrentio/Peerflix `language=english` when missing from a configure URL. */
+export function ensureEnglishInStremioAddonUrl(url: string): string {
+  const trimmed = url.trim();
+  if (!trimmed || /language=english/i.test(trimmed)) return trimmed;
+
+  const base = trimmed.replace(/\/manifest\.json$/i, "").replace(/\/$/, "");
+  if (base.includes("|")) return `${base}|language=english`;
+  return `${base}/language=english`;
+}
+
+export function finalizeStremioAddonUrl(url: string): string {
+  if (!url.trim()) return "";
+  return ensureEnglishInStremioAddonUrl(normalizeStremioBaseUrl(url));
+}
+
 export async function fetchStremioStreams(
   baseUrl: string,
   type: "movie" | "series",
@@ -118,6 +133,9 @@ export function streamScore(stream: StremioStream): number {
   }
   if (label.includes("rd") || label.includes("real-debrid") || label.includes("debrid")) {
     score += 5;
+  }
+  if (label.includes("⚡") || label.includes("cached") || label.includes("instant")) {
+    score += 40;
   }
   if (label.includes("aac")) score += 15;
   if (label.includes("x264") || label.includes("h264") || label.includes("h.264")) score += 10;

@@ -263,6 +263,65 @@ export async function getMovieExternalIds(
   return tmdbFetch<{ imdb_id: string | null }>(`/movie/${id}/external_ids`, apiKey);
 }
 
+export async function getTvExternalIds(
+  apiKey: string,
+  id: number
+): Promise<{ imdb_id: string | null }> {
+  return tmdbFetch<{ imdb_id: string | null }>(`/tv/${id}/external_ids`, apiKey);
+}
+
+export async function getTvDetails(apiKey: string, id: number) {
+  return tmdbFetch<{
+    id: number;
+    name: string;
+    overview: string;
+    poster_path: string | null;
+    backdrop_path: string | null;
+    first_air_date: string;
+    vote_average: number;
+    number_of_seasons: number;
+    seasons: Array<{
+      season_number: number;
+      episode_count: number;
+      name: string;
+      poster_path: string | null;
+    }>;
+    genres: Array<{ id: number; name: string }>;
+  }>(`/tv/${id}`, apiKey);
+}
+
+export async function getTvSeasonEpisodes(apiKey: string, tvId: number, season: number) {
+  return tmdbFetch<{
+    episodes: Array<{
+      season_number: number;
+      episode_number: number;
+      name: string;
+      overview: string;
+      still_path: string | null;
+      air_date: string;
+      runtime: number | null;
+    }>;
+  }>(`/tv/${tvId}/season/${season}`, apiKey);
+}
+
+export function tmdbSeasonsToGroups(
+  seasons: Array<{
+    season_number: number;
+    episode_count: number;
+    name: string;
+    poster_path: string | null;
+  }>
+): Array<{ season: number; episodeCount: number; name: string; posterPath?: string }> {
+  return seasons
+    .filter((s) => s.season_number > 0)
+    .map((s) => ({
+      season: s.season_number,
+      episodeCount: s.episode_count,
+      name: s.name,
+      posterPath: s.poster_path ?? undefined,
+    }));
+}
+
 export async function getMovieVideos(apiKey: string, id: number): Promise<string | null> {
   const data = await tmdbFetch<{
     results: Array<{ key: string; site: string; type: string }>;

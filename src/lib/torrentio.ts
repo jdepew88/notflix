@@ -67,13 +67,22 @@ export function pickBestTorrentioStream(streams: TorrentioStream[]): TorrentioSt
   return candidates[0] ?? null;
 }
 
+export interface ResolveTorrentioOptions {
+  season?: number;
+  episode?: number;
+}
+
 export async function resolveTorrentioStreamUrl(
   streamUrl: string,
-  realDebridToken?: string
+  realDebridToken?: string,
+  options?: ResolveTorrentioOptions
 ): Promise<string> {
   let currentUrl = streamUrl;
+  let magnet: string | null = null;
 
-  for (let hop = 0; hop < 6; hop++) {
+  for (let hop = 0; hop < 8; hop++) {
+    const fromUrl = extractMagnetCandidate(currentUrl);
+    if (fromUrl) magnet = fromUrl;
     const res = await fetch(currentUrl, {
       method: "GET",
       redirect: "manual",
@@ -87,6 +96,8 @@ export async function resolveTorrentioStreamUrl(
       const location = res.headers.get("location");
       if (!location) break;
       currentUrl = new URL(location, currentUrl).href;
+      const fromLocation = extractMagnetCandidate(currentUrl);
+      if (fromLocation) magnet = fromLocation;
       continue;
     }
 
@@ -98,16 +109,30 @@ export async function resolveTorrentioStreamUrl(
         (typeof data.url === "string" ? data.url : "") ||
         (typeof data.download === "string" ? data.download : "") ||
         (typeof data.stream_url === "string" ? data.stream_url : "") ||
-        (typeof data.link === "string" ? data.link : "");
+        (typeof data.link === "string" ? data.link : "") ||
+        (typeof data.magnet === "string" ? data.magnet : "");
+      if (typeof data.magnet === "string") magnet = data.magnet;
       if (next.startsWith("http")) {
         currentUrl = next;
+        const fromNext = extractMagnetCandidate(next);
+        if (fromNext) magnet = fromNext;
         continue;
+      }
+      if (next.startsWith("magnet:")) {
+        magnet = next;
+        break;
       }
       throw new Error("Torrent stream resolver returned JSON without a download URL");
     }
 
-    if (contentType.includes("text/html")) {
-      const snippet = (await res.text()).slice(0, 256).toLowerCase();
+    if (contentType.includes("text/html") || contentType.includes("text/plain")) {
+      const text = await res.text();
+      const fromBody = extractMagnetCandidate(text);
+      if (fromBody) {
+        magnet = fromBody;
+        break;
+      }
+      const snippet = text.slice(0, 256).toLowerCase();
       if (snippet.includes("<!doctype") || snippet.includes("<html")) {
         throw new Error(
           "Stream not ready on Real-Debrid. Choose a cached (⚡) release or try 1080p instead of 4K."
@@ -118,7 +143,30 @@ export async function resolveTorrentioStreamUrl(
     break;
   }
 
+  if (
+    magnet &&
+    realDebridToken &&
+    options?.season != null &&
+    options?.episode != null
+  ) {
+    const { resolveMagnetStreamForEpisode } = await import("./debrid");
+    const resolved = await resolveMagnetStreamForEpisode(
+      realDebridToken,
+      magnet,
+      options.season,
+      options.episode
+    );
+    return resolved.streamUrl;
+  }
+
   return finalizeDebridDownloadUrl(currentUrl, realDebridToken);
+}
+
+function extractMagnetCandidate(text: string): string | null {
+  if (!text) return null;
+  if (text.startsWith("magnet:")) return text;
+  const match = text.match(/magnet:\?xt=urn:btih:[^\s"'<>]+/i);
+  return match ? match[0] : null;
 }
 
 async function finalizeDebridDownloadUrl(

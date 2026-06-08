@@ -12,9 +12,14 @@ import {
   resolveTorrentioStreamUrl,
   type TorrentioStreamOption,
 } from "./torrentio";
-import { fetchStremioStreams, mergeStremioStreamLists } from "./stremio-streams";
+import {
+  fetchStremioStreams,
+  finalizeStremioAddonUrl,
+  mergeStremioStreamLists,
+} from "./stremio-streams";
 import { registerStreamUrlIfLong } from "./stream-sessions";
-import { getMovieDetails, getMovieExternalIds } from "./tmdb";
+import { getMovieDetails, getMovieExternalIds, getTvExternalIds } from "./tmdb";
+import { findLibraryEpisode } from "./episode-library";
 import type { MediaItem } from "./types";
 
 export interface PlayResolveRequest {
@@ -96,8 +101,12 @@ async function buildMediaItem(request: PlayResolveRequest): Promise<MediaItem | 
 
 async function resolveImdbId(request: PlayResolveRequest): Promise<string | undefined> {
   const { tmdbApiKey, tmdbId, type } = request;
-  if (!tmdbApiKey || !tmdbId || type !== "movie") return undefined;
+  if (!tmdbApiKey || !tmdbId) return undefined;
   try {
+    if (type === "series") {
+      const external = await getTvExternalIds(tmdbApiKey, tmdbId);
+      return external.imdb_id ?? undefined;
+    }
     const external = await getMovieExternalIds(tmdbApiKey, tmdbId);
     return external.imdb_id ?? undefined;
   } catch {
@@ -106,10 +115,13 @@ async function resolveImdbId(request: PlayResolveRequest): Promise<string | unde
 }
 
 function torrentioBaseUrl(request: PlayResolveRequest): string {
-  return (
-    (request.torrentioUrl && normalizeTorrentioBaseUrl(request.torrentioUrl)) ||
-    (request.realDebridToken ? buildDefaultTorrentioUrl(request.realDebridToken) : "")
-  );
+  if (request.torrentioUrl?.trim()) {
+    return finalizeStremioAddonUrl(request.torrentioUrl);
+  }
+  if (request.realDebridToken) {
+    return buildDefaultTorrentioUrl(request.realDebridToken);
+  }
+  return "";
 }
 
 function peerflixBaseUrl(request: PlayResolveRequest): string {
@@ -137,11 +149,29 @@ function tryLibraryDbMatch(request: PlayResolveRequest): PlayResolveResult | nul
   const db = readLibraryDatabase();
   if (!db?.items.length) return null;
 
+  if (request.type === "series" && request.season != null && request.episode != null) {
+    const episode = findLibraryEpisode(db.items, {
+      tmdbId: request.tmdbId,
+      title: request.title,
+      season: request.season,
+      episode: request.episode,
+    });
+    if (episode) {
+      return libraryMatchResult(
+        episode,
+        "Playing episode from saved library (local file or Plex metadata)"
+      );
+    }
+    return null;
+  }
+
   const match = findInPlexLibrary(db.items, {
     tmdbId: request.tmdbId,
     title: request.title,
     year: request.year,
     type: request.type,
+    season: request.season,
+    episode: request.episode,
   });
   if (!match) return null;
 
@@ -154,7 +184,14 @@ async function tryPlexMatch(request: PlayResolveRequest): Promise<PlayResolveRes
 
   try {
     const library = await fetchPlexLibrary(plexUrl, plexToken);
-    const match = findInPlexLibrary(library, { tmdbId, title, year, type });
+    const match = findInPlexLibrary(library, {
+      tmdbId,
+      title,
+      year,
+      type,
+      season: request.season,
+      episode: request.episode,
+    });
     if (!match) return null;
 
     const item = itemWithMappedPath(match);
@@ -297,10 +334,10 @@ export async function openTorrentioStreamByIndex(
   }
 
   const item = await buildMediaItem(request);
-  const directUrl = await resolveTorrentioStreamUrl(
-    stream.url,
-    request.realDebridToken
-  );
+  const directUrl = await resolveTorrentioStreamUrl(stream.url, request.realDebridToken, {
+    season: request.season,
+    episode: request.episode,
+  });
   const { session, proxyPath } = registerStreamUrlIfLong(directUrl);
   const option = listed.options[streamIndex];
 

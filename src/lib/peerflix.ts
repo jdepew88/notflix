@@ -1,4 +1,4 @@
-import { normalizeStremioBaseUrl } from "./stremio-streams";
+import { finalizeStremioAddonUrl, normalizeStremioBaseUrl } from "./stremio-streams";
 import { getPeerflixUrl } from "./env";
 
 /** Default Peerflix addon base (English-filtered client-side). */
@@ -22,7 +22,7 @@ export function resolvePeerflixBaseUrl(options: {
   enabled?: boolean;
 }): string {
   if (options.peerflixUrl?.trim()) {
-    return normalizePeerflixBaseUrl(options.peerflixUrl);
+    return finalizeStremioAddonUrl(options.peerflixUrl);
   }
   if (options.enabled === false) return "";
   if (options.realDebridToken || process.env.PEERFLIX_URL) {

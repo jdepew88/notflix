@@ -1,10 +1,44 @@
 import type { MediaItem } from "./types";
 
 export function watchIdForItem(item: MediaItem): string {
-  if (item.type === "series" && item.seriesId) return item.seriesId;
+  if (item.type === "episode" && item.seriesId) return item.seriesId;
   return item.id;
 }
 
 export function watchHrefForItem(item: MediaItem): string {
-  return `/watch/${encodeURIComponent(watchIdForItem(item))}`;
+  const base = `/watch/${encodeURIComponent(watchIdForItem(item))}`;
+  const params = new URLSearchParams();
+
+  if (item.type === "series") {
+    params.set("type", "series");
+    if (item.tmdbId) params.set("tmdbId", String(item.tmdbId));
+    if (item.title) params.set("title", item.title);
+  }
+
+  if (item.type === "episode" && item.season != null && item.episode != null) {
+    params.set("type", "series");
+    params.set("season", String(item.season));
+    params.set("episode", String(item.episode));
+    if (item.tmdbId) params.set("tmdbId", String(item.tmdbId));
+    if (item.title) params.set("title", item.title);
+  }
+
+  const qs = params.toString();
+  return qs ? `${base}?${qs}` : base;
+}
+
+export function watchHrefForEpisode(opts: {
+  watchId: string;
+  tmdbId?: number;
+  title?: string;
+  season: number;
+  episode: number;
+}): string {
+  const params = new URLSearchParams();
+  params.set("type", "series");
+  params.set("season", String(opts.season));
+  params.set("episode", String(opts.episode));
+  if (opts.tmdbId) params.set("tmdbId", String(opts.tmdbId));
+  if (opts.title) params.set("title", opts.title);
+  return `/watch/${encodeURIComponent(opts.watchId)}?${params.toString()}`;
 }

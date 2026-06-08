@@ -52,7 +52,24 @@ export async function POST(request: NextRequest) {
     }
 
     if (action === "resolve" && torrentId) {
-      const stream = await resolveTorrentStream(token, torrentId);
+      const season =
+        typeof body.season === "number"
+          ? body.season
+          : typeof body.season === "string"
+            ? parseInt(body.season, 10)
+            : undefined;
+      const episode =
+        typeof body.episode === "number"
+          ? body.episode
+          : typeof body.episode === "string"
+            ? parseInt(body.episode, 10)
+            : undefined;
+      const stream = await resolveTorrentStream(
+        token,
+        torrentId,
+        Number.isFinite(season) ? season : undefined,
+        Number.isFinite(episode) ? episode : undefined
+      );
       const { session, proxyPath } = registerStreamUrlIfLong(stream.streamUrl);
       return NextResponse.json({
         ...stream,

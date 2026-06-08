@@ -5,6 +5,7 @@ import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { X } from "lucide-react";
 import { VideoPlayer } from "@/components/player/VideoPlayer";
 import { StreamPicker } from "@/components/player/StreamPicker";
+import { EpisodePicker } from "@/components/player/EpisodePicker";
 import { useAppStore, getMediaProgress } from "@/lib/store";
 import { posterUrl } from "@/lib/tmdb";
 import {
@@ -18,6 +19,18 @@ import type { TorrentioStreamOption } from "@/lib/torrentio";
 import { libraryStreamUrl, mappedLibraryFilePath } from "@/lib/library-playback";
 import { isLegacyVideoExtension } from "@/lib/video-formats";
 import { readJsonResponse } from "@/lib/fetch-json";
+import { formatEpisodeLabel } from "@/lib/episode-parse";
+
+function parseWatchTmdbId(watchId: string, searchParams: URLSearchParams): number | undefined {
+  const fromQuery = searchParams.get("tmdbId");
+  if (fromQuery) {
+    const n = parseInt(fromQuery, 10);
+    return Number.isFinite(n) ? n : undefined;
+  }
+  const match = watchId.match(/^tmdb-(?:tv-)?(\d+)$/);
+  if (match) return parseInt(match[1], 10);
+  return undefined;
+}
 
 function buildPlayQuery(opts: {
   tmdbId: number;
@@ -64,6 +77,12 @@ export default function WatchPage() {
     videoCodec?: string;
     needsTranscode?: boolean;
   }>({});
+  const [episodePickerShow, setEpisodePickerShow] = useState<{
+    title: string;
+    tmdbId?: number;
+    seriesId: string;
+    poster?: string;
+  } | null>(null);
   const updateProgress = useAppStore((s) => s.updateProgress);
   const progress = getMediaProgress(id);
   const storeSettings = useAppStore((s) => s.settings);
@@ -369,11 +388,20 @@ export default function WatchPage() {
       setStreamQuality(null);
       setIsDebridPlayback(false);
       setStreamSession(null);
+      setEpisodePickerShow(null);
       setError("");
 
       const settings = getEffectiveSettings(storeSettings);
       const useDirectPlay = Boolean(settings.directPlay) && !forceTranscode;
       const plexMode = useDirectPlay ? "direct" : "transcode";
+      const typeParam = (searchParams.get("type") ?? "movie") as "movie" | "series";
+      const seasonNum = searchParams.get("season")
+        ? parseInt(searchParams.get("season")!, 10)
+        : undefined;
+      const episodeNum = searchParams.get("episode")
+        ? parseInt(searchParams.get("episode")!, 10)
+        : undefined;
+      const tmdbIdFromWatch = parseWatchTmdbId(id, searchParams);
 
       let lookupId = id;
       if (id.startsWith("series-")) {
@@ -498,19 +526,51 @@ export default function WatchPage() {
         }
       }
 
-      if (id.startsWith("tmdb-")) {
-        const tmdbId = parseInt(id.replace("tmdb-", ""), 10);
-        if (!Number.isFinite(tmdbId)) {
-          setError("Invalid title id");
-          return;
+      if (
+        typeParam === "series" &&
+        (seasonNum == null ||
+          episodeNum == null ||
+          !Number.isFinite(seasonNum) ||
+          !Number.isFinite(episodeNum))
+      ) {
+        let showTitle = searchParams.get("title") || "TV Show";
+        let poster: string | undefined;
+
+        const libraryRes = await fetchWithSettings("/api/library", settings);
+        if (libraryRes.ok) {
+          const libData = await libraryRes.json();
+          const showItem = (libData.items ?? []).find(
+            (i: MediaItem) =>
+              i.id === lookupId ||
+              (tmdbIdFromWatch && i.tmdbId === tmdbIdFromWatch && i.type === "series")
+          );
+          if (showItem) {
+            showTitle = showItem.title;
+            poster = posterUrl(showItem.posterPath, "w500");
+          }
         }
-        const type = (searchParams.get("type") ?? "movie") as "movie" | "series";
-        const season = searchParams.get("season")
-          ? parseInt(searchParams.get("season")!, 10)
-          : undefined;
-        const episode = searchParams.get("episode")
-          ? parseInt(searchParams.get("episode")!, 10)
-          : undefined;
+
+        setEpisodePickerShow({
+          title: showTitle,
+          tmdbId: tmdbIdFromWatch,
+          seriesId: lookupId,
+          poster,
+        });
+        return;
+      }
+
+      if (
+        tmdbIdFromWatch &&
+        (typeParam !== "series" ||
+          (seasonNum != null &&
+            episodeNum != null &&
+            Number.isFinite(seasonNum) &&
+            Number.isFinite(episodeNum)))
+      ) {
+        const tmdbId = tmdbIdFromWatch;
+        const type = typeParam;
+        const season = seasonNum;
+        const episode = episodeNum;
 
         try {
           setResolveStatus("Checking Plex library…");
@@ -599,8 +659,69 @@ export default function WatchPage() {
       const libraryRes = await fetchWithSettings("/api/library", settings);
       if (libraryRes.ok) {
         const data = await libraryRes.json();
-        const found = (data.items ?? []).find((i: MediaItem) => i.id === lookupId);
+        const items = (data.items ?? []) as MediaItem[];
+
+        if (
+          seasonNum != null &&
+          episodeNum != null &&
+          Number.isFinite(seasonNum) &&
+          Number.isFinite(episodeNum)
+        ) {
+          const episodeItem = items.find(
+            (i) =>
+              i.type === "episode" &&
+              i.season === seasonNum &&
+              i.episode === episodeNum &&
+              (i.seriesId === lookupId ||
+                i.id === lookupId ||
+                (tmdbIdFromWatch != null && i.tmdbId === tmdbIdFromWatch))
+          );
+          if (episodeItem) {
+            setItem(episodeItem);
+            if (episodeItem.filePath) {
+              await startLibraryFilePlayback(episodeItem);
+              return;
+            }
+            const rk =
+              episodeItem.plexRatingKey ?? episodeItem.id.replace("plex-", "");
+            if (rk) {
+              await startPlexPlayback(rk, episodeItem);
+              return;
+            }
+          }
+        }
+
+        const found = items.find((i: MediaItem) => i.id === lookupId);
         if (found) {
+          if (
+            found.type === "series" &&
+            (seasonNum == null || episodeNum == null)
+          ) {
+            setEpisodePickerShow({
+              title: found.title,
+              tmdbId: found.tmdbId,
+              seriesId: found.id,
+              poster: posterUrl(found.posterPath, "w500"),
+            });
+            return;
+          }
+
+          if (
+            found.type === "episode" &&
+            found.season != null &&
+            found.episode != null &&
+            seasonNum == null
+          ) {
+            const params = new URLSearchParams(searchParams.toString());
+            params.set("type", "series");
+            params.set("season", String(found.season));
+            params.set("episode", String(found.episode));
+            if (found.tmdbId) params.set("tmdbId", String(found.tmdbId));
+            if (found.title) params.set("title", found.title);
+            router.replace(`/watch/${encodeURIComponent(id)}?${params.toString()}`);
+            return;
+          }
+
           setItem(found);
           if (found.plexRatingKey || found.id.startsWith("plex-")) {
             const rk = found.plexRatingKey ?? found.id.replace("plex-", "");
@@ -649,7 +770,24 @@ export default function WatchPage() {
       setError("No stream available for this title. Add it via your library or Real-Debrid.");
     }
     load();
-  }, [id, searchParams, storeSettings, plexReady, forceTranscode, applyTrackedPlayback]);
+  }, [id, searchParams, storeSettings, plexReady, forceTranscode, applyTrackedPlayback, router]);
+
+  const handleEpisodeSelect = useCallback(
+    (season: number, episode: number) => {
+      const params = new URLSearchParams(searchParams.toString());
+      params.set("type", "series");
+      params.set("season", String(season));
+      params.set("episode", String(episode));
+      if (episodePickerShow?.tmdbId) {
+        params.set("tmdbId", String(episodePickerShow.tmdbId));
+      }
+      if (episodePickerShow?.title) {
+        params.set("title", episodePickerShow.title);
+      }
+      router.replace(`/watch/${encodeURIComponent(id)}?${params.toString()}`);
+    },
+    [searchParams, episodePickerShow, id, router]
+  );
 
   const handleAudioChange = useCallback(
     (index: number) => {
@@ -749,13 +887,28 @@ export default function WatchPage() {
     );
   }
 
+  if (episodePickerShow) {
+    return (
+      <EpisodePicker
+        title={episodePickerShow.title}
+        poster={episodePickerShow.poster}
+        tmdbId={episodePickerShow.tmdbId}
+        seriesId={episodePickerShow.seriesId}
+        onSelect={handleEpisodeSelect}
+        onCancel={() => router.back()}
+      />
+    );
+  }
+
   if (torrentStreams && torrentStreams.length > 0 && item) {
+    const season = searchParams.get("season");
+    const episode = searchParams.get("episode");
     return (
       <StreamPicker
         title={item.title}
         subtitle={
-          searchParams.get("season") && searchParams.get("episode")
-            ? `Season ${searchParams.get("season")} · Episode ${searchParams.get("episode")}`
+          season && episode
+            ? `${formatEpisodeLabel(parseInt(season, 10), parseInt(episode, 10))} · choose a torrent (season packs supported)`
             : undefined
         }
         streams={torrentStreams}

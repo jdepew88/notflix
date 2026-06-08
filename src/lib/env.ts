@@ -1,6 +1,7 @@
 /** Server-side environment helpers with production defaults. */
 
 import { mapHostPathToContainer } from "./library-path";
+import { finalizeStremioAddonUrl } from "./stremio-streams";
 
 export function getPort(): number {
   const raw = process.env.PORT?.trim();
@@ -36,11 +37,13 @@ export function getTvdbApiKey(): string {
 
 /** Full Torrentio install URL from configure page, without /manifest.json */
 export function getTorrentioUrl(): string {
-  return process.env.TORRENTIO_URL?.trim() || "";
+  const raw = process.env.TORRENTIO_URL?.trim() || "";
+  return raw ? finalizeStremioAddonUrl(raw) : "";
 }
 
 export function getPeerflixUrl(): string {
-  return process.env.PEERFLIX_URL?.trim() || "";
+  const raw = process.env.PEERFLIX_URL?.trim() || "";
+  return raw ? finalizeStremioAddonUrl(raw) : "";
 }
 
 export function logStartupConfig(): void {

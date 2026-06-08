@@ -1,6 +1,6 @@
 import type { MediaItem } from "./types";
 
-function normalizeTitle(title: string): string {
+export function normalizeTitle(title: string): string {
   return title
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, " ")
@@ -20,9 +20,27 @@ export function findInPlexLibrary(
     title?: string;
     year?: number;
     type?: "movie" | "series" | "episode";
+    season?: number;
+    episode?: number;
   }
 ): MediaItem | null {
-  const { tmdbId, title, year, type } = query;
+  const { tmdbId, title, year, type, season, episode } = query;
+
+  if (season != null && episode != null) {
+    const episodeMatch = items.find(
+      (item) =>
+        item.type === "episode" &&
+        item.season === season &&
+        item.episode === episode &&
+        (tmdbId ? item.tmdbId === tmdbId : true) &&
+        (!title || normalizeTitle(item.title) === normalizeTitle(title))
+    );
+    if (episodeMatch) return episodeMatch;
+  }
+
+  if (type === "series" && season != null && episode != null) {
+    return null;
+  }
 
   if (tmdbId) {
     const byTmdb = items.find(
