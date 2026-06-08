@@ -140,7 +140,7 @@ docker run -d \
 
 Add Traefik labels to `compose.yaml` (see commented section) and attach the container to your Traefik network.
 
-Example dynamic config for **notflix.jrtech.com**:
+Example dynamic config for **notflix.yourdomain.com**:
 
 ```yaml
 # compose.yaml labels (uncomment and adjust)
