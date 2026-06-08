@@ -6,6 +6,7 @@ import { MediaImage } from "@/components/ui/MediaImage";
 import { cn } from "@/lib/cn";
 import type { EpisodeListEntry, SeasonGroup } from "@/lib/episode-library";
 import { formatEpisodeLabel } from "@/lib/episode-parse";
+import { getLastWatched } from "@/lib/store";
 
 interface EpisodeBrowserProps {
   title: string;
@@ -61,16 +62,21 @@ export function EpisodeBrowser({
       const list = (data.seasons ?? []) as SeasonGroup[];
       setSeasons(list);
 
+      const lastWatched =
+        seriesId && currentSeason == null ? getLastWatched(seriesId) : null;
+      const resumeSeason = currentSeason ?? lastWatched?.season;
+      const resumeEpisode = currentEpisode ?? lastWatched?.episode;
+
       const initialSeason =
-        currentSeason != null && list.some((s) => s.season === currentSeason)
-          ? currentSeason
+        resumeSeason != null && list.some((s) => s.season === resumeSeason)
+          ? resumeSeason
           : (list[0]?.season ?? null);
       setActiveSeason(initialSeason);
 
-      if (currentSeason != null && currentEpisode != null) {
+      if (resumeSeason != null && resumeEpisode != null) {
         const ep = list
-          .find((s) => s.season === currentSeason)
-          ?.episodes.find((e) => e.episode === currentEpisode);
+          .find((s) => s.season === resumeSeason)
+          ?.episodes.find((e) => e.episode === resumeEpisode);
         setFocusedEpisode(ep ?? list[0]?.episodes[0] ?? null);
       } else {
         setFocusedEpisode(list[0]?.episodes[0] ?? null);

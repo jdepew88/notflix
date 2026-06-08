@@ -12,11 +12,19 @@ export interface UserAccount {
   createdAt: string;
 }
 
+export interface LastWatchedEntry {
+  season?: number;
+  episode?: number;
+  progress: number;
+  updatedAt: number;
+}
+
 export interface UserState {
   profiles: UserProfile[];
   activeProfileId: string | null;
   myListByProfile: Record<string, string[]>;
   continueWatchingByProfile: Record<string, Record<string, number>>;
+  lastWatchedByProfile?: Record<string, Record<string, LastWatchedEntry>>;
 }
 
 interface UsersFile {
@@ -71,6 +79,7 @@ export function readUserState(userId: string): UserState {
       activeProfileId: parsed.activeProfileId ?? null,
       myListByProfile: parsed.myListByProfile ?? {},
       continueWatchingByProfile: parsed.continueWatchingByProfile ?? {},
+      lastWatchedByProfile: parsed.lastWatchedByProfile ?? {},
     };
   } catch {
     const state = defaultUserState();

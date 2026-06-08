@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
-import { X } from "lucide-react";
+import { ArrowLeft } from "lucide-react";
 import { VideoPlayer } from "@/components/player/VideoPlayer";
 import { StreamPicker } from "@/components/player/StreamPicker";
 import { EpisodePicker } from "@/components/player/EpisodePicker";
@@ -27,6 +27,7 @@ import {
   parseWatchTmdbId,
   resolveWatchMediaType,
 } from "@/lib/episode-nav";
+import { resolveProgressKey } from "@/lib/watch-progress";
 
 function buildPlayQuery(opts: {
   tmdbId: number;
@@ -83,7 +84,6 @@ export default function WatchPage() {
   const [seriesSeasons, setSeriesSeasons] = useState<SeasonGroup[]>([]);
   const proxiedStreamUrlRef = useRef<string | null>(null);
   const updateProgress = useAppStore((s) => s.updateProgress);
-  const progress = getMediaProgress(id);
   const storeSettings = useAppStore((s) => s.settings);
 
   const startRemux = useCallback(
@@ -817,7 +817,8 @@ export default function WatchPage() {
       if (watchTmdbId) params.set("tmdbId", String(watchTmdbId));
       if (showTitle) params.set("title", showTitle);
       setEpisodePickerShow(null);
-      setStreamUrl(null);
+      setForceTranscode(false);
+      setError("");
       router.replace(`/watch/${encodeURIComponent(id)}?${params.toString()}`);
     },
     [
@@ -944,11 +945,37 @@ export default function WatchPage() {
       streamUrl.includes("/api/plex/stream"));
   const transcodeAvailable =
     !isDebridPlayback && (!!sourceUrl || !!sourcePath || !!streamSession || !!plexRatingKey);
+  const progressKey =
+    inSeriesPlayback && watchSeason != null && watchEpisode != null
+      ? resolveProgressKey({
+          watchId: seriesWatchId,
+          season: watchSeason,
+          episode: watchEpisode,
+        })
+      : id;
+  const progress = getMediaProgress(progressKey);
+
   const handleProgress = useCallback(
     (_seconds: number, percent: number) => {
+      if (inSeriesPlayback && watchSeason != null && watchEpisode != null) {
+        updateProgress(progressKey, percent, {
+          season: watchSeason,
+          episode: watchEpisode,
+          seriesId: seriesWatchId,
+        });
+        return;
+      }
       updateProgress(id, percent);
     },
-    [id, updateProgress]
+    [
+      id,
+      progressKey,
+      inSeriesPlayback,
+      watchSeason,
+      watchEpisode,
+      seriesWatchId,
+      updateProgress,
+    ]
   );
 
   if (!plexReady) {
@@ -1033,10 +1060,11 @@ export default function WatchPage() {
       <button
         type="button"
         onClick={() => router.back()}
-        className="absolute right-4 top-4 z-50 rounded-full bg-black/50 p-2 hover:bg-black/80"
-        aria-label="Close player"
+        className="absolute left-4 top-4 z-50 flex items-center gap-2 rounded bg-black/50 px-3 py-2 hover:bg-black/80"
+        aria-label="Back to browse"
       >
-        <X className="h-6 w-6" />
+        <ArrowLeft className="h-5 w-5" />
+        <span className="hidden text-sm font-medium sm:inline">Back</span>
       </button>
       {error && (
         <div className="absolute left-4 right-4 top-16 z-50 rounded bg-yellow-900/80 px-4 py-2 text-sm text-yellow-200">
@@ -1049,7 +1077,8 @@ export default function WatchPage() {
         poster={posterUrl(item.posterPath, "w780")}
         initialProgress={progress}
         onProgress={handleProgress}
-        onEnded={nextEpisode ? handleNextEpisode : undefined}
+        autoAdvanceNext={Boolean(nextEpisode)}
+        onNextEpisode={nextEpisode ? handleNextEpisode : undefined}
         audioTracks={audioTracks}
         subtitleTracks={subtitleTracks}
         audioIndex={audioIndex}

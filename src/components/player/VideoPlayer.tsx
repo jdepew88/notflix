@@ -38,6 +38,7 @@ import {
 import { subtitleFileToObjectUrl } from "@/lib/external-subtitles";
 import { TrackSelector } from "./TrackSelector";
 import { StreamInfoModal } from "./StreamInfoModal";
+import { NextEpisodeOverlay } from "./NextEpisodeOverlay";
 import type { StreamTrack } from "@/types/media-tracks";
 import type { StreamPlaybackInfo } from "@/types/stream-info";
 
@@ -48,6 +49,8 @@ interface VideoPlayerProps {
   initialProgress?: number;
   onProgress?: (seconds: number, percent: number) => void;
   onEnded?: () => void;
+  autoAdvanceNext?: boolean;
+  onNextEpisode?: () => void;
   audioTracks?: StreamTrack[];
   subtitleTracks?: StreamTrack[];
   audioIndex?: number;
@@ -87,6 +90,8 @@ export function VideoPlayer({
   initialProgress = 0,
   onProgress,
   onEnded,
+  autoAdvanceNext,
+  onNextEpisode,
   audioTracks = [],
   subtitleTracks = [],
   audioIndex = 0,
@@ -137,6 +142,7 @@ export function VideoPlayer({
   const [externalSubUrl, setExternalSubUrl] = useState<string | null>(null);
   const [externalSubName, setExternalSubName] = useState<string | null>(null);
   const [externalSubEnabled, setExternalSubEnabled] = useState(false);
+  const [showNextEpisode, setShowNextEpisode] = useState(false);
 
   const showAirPlay = isSafariBrowser();
 
@@ -227,6 +233,7 @@ export function VideoPlayer({
 
   useEffect(() => {
     setPlaybackError(null);
+    setShowNextEpisode(false);
     autoplayAttemptedRef.current = false;
     setAudioDelayMs(0);
     if (audioGraphRef.current) {
@@ -527,6 +534,55 @@ export function VideoPlayer({
     };
   }, []);
 
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const video = videoRef.current;
+      if (!video || e.target instanceof HTMLInputElement) return;
+
+      switch (e.key) {
+        case " ":
+        case "k":
+        case "K":
+          e.preventDefault();
+          void togglePlay();
+          break;
+        case "f":
+        case "F":
+          e.preventDefault();
+          void toggleFullscreen();
+          break;
+        case "m":
+        case "M":
+          e.preventDefault();
+          video.muted = !video.muted;
+          setMuted(video.muted);
+          break;
+        case "ArrowLeft":
+          e.preventDefault();
+          skip(-10);
+          break;
+        case "ArrowRight":
+          e.preventDefault();
+          if (seriesPlayback?.hasNextEpisode && seriesPlayback.onNextEpisode && e.shiftKey) {
+            seriesPlayback.onNextEpisode();
+          } else {
+            skip(10);
+          }
+          break;
+        case "c":
+        case "C":
+          e.preventDefault();
+          toggleCaptions();
+          break;
+        default:
+          break;
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [seriesPlayback, togglePlay, toggleFullscreen, skip, toggleCaptions]);
+
   const progressPct = duration > 0 ? (currentTime / duration) * 100 : 0;
   const bufferedAhead = videoRef.current ? getBufferedAhead(videoRef.current) : 0;
 
@@ -576,6 +632,10 @@ export function VideoPlayer({
           }}
           onEnded={() => {
             setPlaying(false);
+            if (autoAdvanceNext && onNextEpisode) {
+              setShowNextEpisode(true);
+              return;
+            }
             onEnded?.();
           }}
           onError={() => {
@@ -659,6 +719,16 @@ export function VideoPlayer({
             </button>
           )}
         </div>
+      )}
+
+      {showNextEpisode && onNextEpisode && (
+        <NextEpisodeOverlay
+          onPlay={() => {
+            setShowNextEpisode(false);
+            onNextEpisode();
+          }}
+          onDismiss={() => setShowNextEpisode(false)}
+        />
       )}
 
       {(buffering || initialBuffering || trackSwitching) && (

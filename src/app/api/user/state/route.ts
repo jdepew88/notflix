@@ -41,6 +41,7 @@ export async function PUT(request: NextRequest) {
     myListByProfile: body.myListByProfile ?? current.myListByProfile,
     continueWatchingByProfile:
       body.continueWatchingByProfile ?? current.continueWatchingByProfile,
+    lastWatchedByProfile: body.lastWatchedByProfile ?? current.lastWatchedByProfile,
   };
   writeUserState(userId, next);
   return NextResponse.json({ state: next });

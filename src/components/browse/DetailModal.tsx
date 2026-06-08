@@ -10,12 +10,13 @@ import { useDetailModal } from "@/providers/DetailModalProvider";
 import { useAppStore, isInMyList } from "@/lib/store";
 import { fetchWithSettings } from "@/lib/client-settings";
 import { backdropUrl, posterUrl } from "@/lib/tmdb";
+import { playHrefForItem, playLabelForItem } from "@/lib/playback";
 import {
   isSeriesItem,
   watchHrefForEpisode,
-  watchHrefForItem,
   watchIdForItem,
 } from "@/lib/watch-url";
+import { formatMatchScore } from "@/lib/watch-progress";
 import { EpisodeBrowser } from "@/components/player/EpisodeBrowser";
 import { TitleCard } from "./TitleCard";
 import type { MediaItem } from "@/lib/types";
@@ -110,6 +111,9 @@ export function DetailModal() {
   const backdrop = backdropUrl(display.backdropPath);
   const inList = isInMyList(display.id);
   const isSeries = isSeriesItem(display);
+  const resume = playHrefForItem(display);
+  const resumeLabel = playLabelForItem(display);
+  const matchLabel = formatMatchScore(display.rating);
 
   const playEpisode = (season: number, episode: number) => {
     closeDetail();
@@ -180,20 +184,29 @@ export function DetailModal() {
                 <h2 className="mb-4 text-2xl font-bold md:text-4xl">{display.title}</h2>
                 <div className="flex flex-wrap gap-3">
                   {isSeries ? (
-                    <a
-                      href="#episodes"
-                      className="flex items-center gap-2 rounded bg-white px-6 py-2 font-semibold text-black hover:bg-white/80"
-                    >
-                      <ListVideo className="h-5 w-5" />
-                      Episodes
-                    </a>
+                    <>
+                      <Link
+                        href={resume}
+                        className="flex items-center gap-2 rounded bg-white px-6 py-2 font-semibold text-black hover:bg-white/80"
+                      >
+                        <Play className="h-5 w-5 fill-current" />
+                        {resumeLabel === "Play" ? "Play" : resumeLabel}
+                      </Link>
+                      <a
+                        href="#episodes"
+                        className="flex items-center gap-2 rounded bg-white/20 px-6 py-2 font-semibold hover:bg-white/30"
+                      >
+                        <ListVideo className="h-5 w-5" />
+                        Episodes
+                      </a>
+                    </>
                   ) : (
                     <Link
-                      href={watchHrefForItem(display)}
+                      href={resume}
                       className="flex items-center gap-2 rounded bg-white px-6 py-2 font-semibold text-black hover:bg-white/80"
                     >
                       <Play className="h-5 w-5 fill-current" />
-                      Play
+                      {resumeLabel}
                     </Link>
                   )}
                   <button
@@ -218,9 +231,12 @@ export function DetailModal() {
             <div className="grid gap-6 p-6 md:grid-cols-[2fr_1fr]">
               <div>
                 <div className="mb-3 flex flex-wrap items-center gap-3 text-sm">
-                  <span className="font-semibold text-green-400">
-                    {Math.min(99, Math.round((display.rating ?? 7) * 10))}% Match
-                  </span>
+                  {matchLabel && (
+                    <span className="font-semibold text-green-400">{matchLabel}</span>
+                  )}
+                  {display.rating != null && display.rating > 0 && (
+                    <span>{display.rating.toFixed(1)} ★</span>
+                  )}
                   {display.releaseDate && <span>{display.releaseDate.slice(0, 4)}</span>}
                   {display.runtime && (
                     <span className="border border-white/40 px-1 text-xs">{display.runtime}m</span>

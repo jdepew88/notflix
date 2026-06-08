@@ -6,7 +6,9 @@ import { MediaImage } from "@/components/ui/MediaImage";
 import { Play, Info, Volume2, VolumeX, AlertCircle } from "lucide-react";
 import { motion } from "framer-motion";
 import { backdropUrl } from "@/lib/tmdb";
-import { watchHrefForItem } from "@/lib/watch-url";
+import { playHrefForItem, playLabelForItem } from "@/lib/playback";
+import { getMediaProgress } from "@/lib/store";
+import { watchIdForItem } from "@/lib/watch-url";
 import { useDetailModal } from "@/providers/DetailModalProvider";
 import type { MediaItem } from "@/lib/types";
 
@@ -36,7 +38,9 @@ export function HeroBanner({ item: initialItem, videoError, onHeroItemChange }: 
   const [heroItem, setHeroItem] = useState(initialItem);
   const [heroError, setHeroError] = useState<string | null>(videoError ?? null);
   const backdrop = backdropUrl(heroItem.backdropPath);
-  const watchHref = watchHrefForItem(heroItem);
+  const watchHref = playHrefForItem(heroItem);
+  const playLabel = playLabelForItem(heroItem);
+  const heroProgress = getMediaProgress(watchIdForItem(heroItem));
   const videoRef = useRef<HTMLVideoElement>(null);
   const [trailerKey, setTrailerKey] = useState<string | null>(null);
   const [localVideoUrl, setLocalVideoUrl] = useState<string | null>(null);
@@ -272,13 +276,21 @@ export function HeroBanner({ item: initialItem, videoError, onHeroItemChange }: 
             {heroItem.overview}
           </p>
         )}
+        {heroProgress > 0 && heroProgress < 95 && (
+          <div className="mb-3 h-1 max-w-xs overflow-hidden rounded bg-white/30">
+            <div
+              className="h-full bg-netflix-red"
+              style={{ width: `${heroProgress}%` }}
+            />
+          </div>
+        )}
         <div className="flex flex-wrap gap-3">
           <Link
             href={watchHref}
             className="flex items-center gap-2 rounded bg-white px-6 py-2 text-sm font-semibold text-black transition hover:bg-white/80 md:px-8 md:py-2.5 md:text-base"
           >
             <Play className="h-5 w-5 fill-current" />
-            Play
+            {playLabel}
           </Link>
           <button
             type="button"

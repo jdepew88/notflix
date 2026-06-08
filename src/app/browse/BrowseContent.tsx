@@ -75,12 +75,10 @@ async function loadTmdbHomeRows(
   defs: typeof HOME_TMDB_ROWS_INITIAL,
   settings: ReturnType<typeof getEffectiveSettings>
 ): Promise<ContentRowData[]> {
-  const rows: ContentRowData[] = [];
-  for (const def of defs) {
-    const row = await fetchHomeTmdbRow(def, settings, fetchWithSettings);
-    if (row) rows.push(row);
-  }
-  return rows;
+  const results = await Promise.all(
+    defs.map((def) => fetchHomeTmdbRow(def, settings, fetchWithSettings))
+  );
+  return results.filter((row): row is ContentRowData => Boolean(row));
 }
 
 export function BrowseContent() {
@@ -98,6 +96,8 @@ export function BrowseContent() {
   const [moreRowsExhausted, setMoreRowsExhausted] = useState(false);
   const [syncStatus, setSyncStatus] = useState<LibrarySyncStatus | null>(null);
   const loadingMoreRef = useRef(false);
+  const allRowsRef = useRef(allRows);
+  allRowsRef.current = allRows;
   const sentinelRef = useRef<HTMLDivElement>(null);
   const loadGenerationRef = useRef(0);
 
@@ -164,7 +164,8 @@ export function BrowseContent() {
   const loadBrowse = useCallback(
     async (options: { refresh?: boolean } = {}) => {
       const generation = ++loadGenerationRef.current;
-      setLoading(true);
+      const softRefresh = allRowsRef.current.length > 0;
+      if (!softRefresh) setLoading(true);
       setLoadFailed(false);
       const settings = getEffectiveSettings(storeSettings);
 

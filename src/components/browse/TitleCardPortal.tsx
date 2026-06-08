@@ -10,7 +10,8 @@ import { usePortal } from "@/providers/PortalProvider";
 import { useDetailModal } from "@/providers/DetailModalProvider";
 import { useAppStore, isInMyList } from "@/lib/store";
 import { posterUrl, backdropUrl } from "@/lib/tmdb";
-import { watchHrefForItem } from "@/lib/watch-url";
+import { playHrefForItem, playLabelForItem } from "@/lib/playback";
+import { formatMatchScore } from "@/lib/watch-progress";
 import { WatchProviderLogos } from "@/components/browse/WatchProviderLogos";
 import { cn } from "@/lib/cn";
 
@@ -19,11 +20,6 @@ function formatRuntime(minutes?: number): string {
   const h = Math.floor(minutes / 60);
   const m = minutes % 60;
   return h > 0 ? `${h}h ${m}m` : `${m}m`;
-}
-
-function matchScore(rating?: number): number {
-  if (!rating) return Math.floor(70 + Math.random() * 25);
-  return Math.min(99, Math.round(rating * 10));
 }
 
 export function TitleCardPortal() {
@@ -57,7 +53,9 @@ export function TitleCardPortal() {
   const poster = posterUrl(item.posterPath, "w500");
   const backdrop = backdropUrl(item.backdropPath);
   const inList = isInMyList(item.id);
-  const score = matchScore(item.rating);
+  const matchLabel = formatMatchScore(item.rating);
+  const playHref = playHrefForItem(item);
+  const playLabel = playLabelForItem(item);
 
   return createPortal(
     <AnimatePresence>
@@ -96,8 +94,9 @@ export function TitleCardPortal() {
           <div className="mb-2 flex items-center gap-2">
             <button
               type="button"
-              onClick={() => router.push(watchHrefForItem(item))}
+              onClick={() => router.push(playHref)}
               className="flex h-8 w-8 items-center justify-center rounded-full bg-white text-black hover:bg-white/80"
+              title={playLabel}
             >
               <Play className="h-4 w-4 fill-current" />
             </button>
@@ -126,9 +125,9 @@ export function TitleCardPortal() {
             </button>
           </div>
 
-          <p className="mb-1 text-sm font-semibold text-green-400">
-            {score}% Match
-          </p>
+          {matchLabel && (
+            <p className="mb-1 text-sm font-semibold text-green-400">{matchLabel}</p>
+          )}
           <div className="mb-2 flex flex-wrap items-center gap-2 text-xs text-netflix-light-gray">
             {item.releaseDate && (
               <span className="border border-white/40 px-1">{item.releaseDate.slice(0, 4)}</span>
