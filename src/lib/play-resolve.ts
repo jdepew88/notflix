@@ -10,6 +10,7 @@ import {
   resolveTorrentioStreamUrl,
   type TorrentioStreamOption,
 } from "./torrentio";
+import { registerStreamUrlIfLong } from "./stream-sessions";
 import { getMovieDetails, getMovieExternalIds } from "./tmdb";
 import type { MediaItem } from "./types";
 
@@ -49,6 +50,7 @@ export interface ListPlaybackSourcesResult {
 export interface OpenTorrentioStreamResult {
   item?: MediaItem;
   streamUrl: string;
+  streamSession?: string;
   streamLabel: string;
 }
 
@@ -218,12 +220,17 @@ export async function openTorrentioStreamByIndex(
   }
 
   const item = await buildMediaItem(request);
-  const directUrl = await resolveTorrentioStreamUrl(stream.url);
+  const directUrl = await resolveTorrentioStreamUrl(
+    stream.url,
+    request.realDebridToken
+  );
+  const { session, proxyPath } = registerStreamUrlIfLong(directUrl);
   const option = listed.options[streamIndex];
 
   return {
     item,
-    streamUrl: `/api/proxy/stream?url=${encodeURIComponent(directUrl)}`,
+    streamUrl: proxyPath,
+    streamSession: session,
     streamLabel: option?.label || stream.title || stream.name || "Real-Debrid",
   };
 }

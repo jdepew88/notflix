@@ -8,6 +8,7 @@ import {
   deleteTorrent,
 } from "@/lib/debrid";
 import { getRealDebridToken } from "@/lib/env";
+import { registerStreamUrlIfLong } from "@/lib/stream-sessions";
 
 function getToken(request: NextRequest): string | null {
   return request.headers.get("x-debrid-token") || getRealDebridToken() || null;
@@ -52,7 +53,12 @@ export async function POST(request: NextRequest) {
 
     if (action === "resolve" && torrentId) {
       const stream = await resolveTorrentStream(token, torrentId);
-      return NextResponse.json(stream);
+      const { session, proxyPath } = registerStreamUrlIfLong(stream.streamUrl);
+      return NextResponse.json({
+        ...stream,
+        streamUrl: proxyPath,
+        streamSession: session,
+      });
     }
 
     if (action === "info" && torrentId) {

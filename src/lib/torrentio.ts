@@ -67,7 +67,15 @@ export async function fetchTorrentioStreams(
 
   if (!res.ok) {
     const text = await res.text().catch(() => "");
+    if (text.trimStart().toLowerCase().startsWith("<!doctype")) {
+      throw new Error("Torrentio returned an error page. Check Real-Debrid token and try again.");
+    }
     throw new Error(`Torrentio error (${res.status}): ${text.slice(0, 200)}`);
+  }
+
+  const contentType = res.headers.get("content-type") || "";
+  if (contentType.includes("text/html")) {
+    throw new Error("Torrentio returned HTML instead of stream list. Check Real-Debrid configuration.");
   }
 
   const data = (await res.json()) as TorrentioStreamResponse;
@@ -200,19 +208,81 @@ export function pickBestTorrentioStream(streams: TorrentioStream[]): TorrentioSt
   return candidates[0] ?? null;
 }
 
-export async function resolveTorrentioStreamUrl(streamUrl: string): Promise<string> {
-  const res = await fetch(streamUrl, {
-    method: "GET",
-    redirect: "follow",
-    headers: {
-      Accept: "*/*",
-      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-    },
-  });
+export async function resolveTorrentioStreamUrl(
+  streamUrl: string,
+  realDebridToken?: string
+): Promise<string> {
+  let currentUrl = streamUrl;
 
-  if (!res.ok) {
-    throw new Error(`Failed to resolve stream (${res.status})`);
+  for (let hop = 0; hop < 6; hop++) {
+    const res = await fetch(currentUrl, {
+      method: "GET",
+      redirect: "manual",
+      headers: {
+        Accept: "application/json, */*",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+      },
+    });
+
+    if (res.status >= 300 && res.status < 400) {
+      const location = res.headers.get("location");
+      if (!location) break;
+      currentUrl = new URL(location, currentUrl).href;
+      continue;
+    }
+
+    const contentType = res.headers.get("content-type") || "";
+
+    if (contentType.includes("application/json")) {
+      const data = (await res.json()) as Record<string, unknown>;
+      const next =
+        (typeof data.url === "string" ? data.url : "") ||
+        (typeof data.download === "string" ? data.download : "") ||
+        (typeof data.stream_url === "string" ? data.stream_url : "") ||
+        (typeof data.link === "string" ? data.link : "");
+      if (next.startsWith("http")) {
+        currentUrl = next;
+        continue;
+      }
+      throw new Error("Torrent stream resolver returned JSON without a download URL");
+    }
+
+    if (contentType.includes("text/html")) {
+      const snippet = (await res.text()).slice(0, 256).toLowerCase();
+      if (snippet.includes("<!doctype") || snippet.includes("<html")) {
+        throw new Error(
+          "Stream not ready on Real-Debrid. Choose a cached (⚡) release or try 1080p instead of 4K."
+        );
+      }
+    }
+
+    break;
   }
 
-  return res.url;
+  return finalizeDebridDownloadUrl(currentUrl, realDebridToken);
+}
+
+async function finalizeDebridDownloadUrl(
+  url: string,
+  token?: string
+): Promise<string> {
+  if (!token) return url;
+
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname.toLowerCase();
+    const needsUnrestrict =
+      (host === "real-debrid.com" || host === "www.real-debrid.com") &&
+      parsed.pathname.includes("/d/");
+
+    if (needsUnrestrict) {
+      const { unrestrictLink } = await import("./debrid");
+      const result = await unrestrictLink(token, url);
+      return result.download;
+    }
+  } catch (err) {
+    if (err instanceof Error && err.message.includes("Stream not ready")) throw err;
+  }
+
+  return url;
 }

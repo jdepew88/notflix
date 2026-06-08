@@ -15,6 +15,7 @@ import {
 import type { MediaItem } from "@/lib/types";
 import type { StreamTrack } from "@/types/media-tracks";
 import type { TorrentioStreamOption } from "@/lib/torrentio";
+import { readJsonResponse } from "@/lib/fetch-json";
 
 function buildPlayQuery(opts: {
   tmdbId: number;
@@ -55,12 +56,14 @@ export default function WatchPage() {
   const [openingStreamIndex, setOpeningStreamIndex] = useState<number | null>(null);
   const [streamQuality, setStreamQuality] = useState<string | null>(null);
   const [isDebridPlayback, setIsDebridPlayback] = useState(false);
+  const [streamSession, setStreamSession] = useState<string | null>(null);
   const updateProgress = useAppStore((s) => s.updateProgress);
   const progress = getMediaProgress(id);
   const storeSettings = useAppStore((s) => s.settings);
 
   const startRemux = useCallback(
     async (opts: {
+      session?: string | null;
       url?: string | null;
       path?: string | null;
       audio: number;
@@ -68,7 +71,9 @@ export default function WatchPage() {
     }) => {
       const subParam = opts.subtitle === null ? "-1" : String(opts.subtitle);
       let query = `audio=${opts.audio}&subtitle=${subParam}`;
-      if (opts.path) {
+      if (opts.session) {
+        query = `session=${encodeURIComponent(opts.session)}&${query}`;
+      } else if (opts.path) {
         query = `path=${encodeURIComponent(opts.path)}&${query}`;
       } else if (opts.url) {
         query = `url=${encodeURIComponent(opts.url)}&${query}`;
@@ -79,9 +84,9 @@ export default function WatchPage() {
       setTranscodeLoading(true);
       try {
         const res = await fetch(`/api/debrid/remux?${query}`);
-        const data = await res.json();
+        const data = await readJsonResponse<{ streamUrl?: string; error?: string }>(res);
         if (!res.ok) throw new Error(data.error || "Remux failed");
-        setStreamUrl(data.streamUrl);
+        setStreamUrl(data.streamUrl!);
         setError("");
       } catch (err) {
         setError(err instanceof Error ? err.message : "Remux failed");
@@ -94,6 +99,7 @@ export default function WatchPage() {
 
   const startTranscode = useCallback(
     async (opts: {
+      session?: string | null;
       url?: string | null;
       path?: string | null;
       audio: number;
@@ -101,7 +107,9 @@ export default function WatchPage() {
     }) => {
       const subParam = opts.subtitle === null ? "-1" : String(opts.subtitle);
       let query = `audio=${opts.audio}&subtitle=${subParam}`;
-      if (opts.path) {
+      if (opts.session) {
+        query = `session=${encodeURIComponent(opts.session)}&${query}`;
+      } else if (opts.path) {
         query = `path=${encodeURIComponent(opts.path)}&${query}`;
       } else if (opts.url) {
         query = `url=${encodeURIComponent(opts.url)}&${query}`;
@@ -112,9 +120,9 @@ export default function WatchPage() {
       setTranscodeLoading(true);
       try {
         const res = await fetch(`/api/debrid/transcode?${query}`);
-        const data = await res.json();
+        const data = await readJsonResponse<{ streamUrl?: string; error?: string }>(res);
         if (!res.ok) throw new Error(data.error || "Transcode failed");
-        setStreamUrl(data.streamUrl);
+        setStreamUrl(data.streamUrl!);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Transcode failed");
       } finally {
@@ -124,21 +132,53 @@ export default function WatchPage() {
     []
   );
 
+  const fetchMediaTracks = useCallback(
+    async (opts: { session?: string | null; url?: string; path?: string }) => {
+      if (opts.session) {
+        return fetch(`/api/media/tracks?session=${encodeURIComponent(opts.session)}`);
+      }
+      if (opts.path) {
+        return fetch(`/api/media/tracks?path=${encodeURIComponent(opts.path)}`);
+      }
+      if (opts.url && opts.url.length < 1800) {
+        return fetch(`/api/media/tracks?url=${encodeURIComponent(opts.url)}`);
+      }
+      if (opts.url) {
+        return fetch("/api/media/tracks", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url: opts.url }),
+        });
+      }
+      throw new Error("No stream source for track probe");
+    },
+    []
+  );
+
   const applyTrackedPlayback = useCallback(
     async (opts: {
       url?: string;
       path?: string;
+      session?: string | null;
       proxiedUrl?: string;
       externalStreamUrl?: string;
       useDirectPlay: boolean;
       subtitleOverride?: number | null;
       debridDirectPlay?: boolean;
     }) => {
-      const tracksQuery = opts.path
-        ? `path=${encodeURIComponent(opts.path)}`
-        : `url=${encodeURIComponent(opts.url!)}`;
-      const tracksRes = await fetch(`/api/media/tracks?${tracksQuery}`);
-      const tracksData = await tracksRes.json();
+      const tracksRes = await fetchMediaTracks({
+        session: opts.session,
+        path: opts.path,
+        url: opts.url,
+      });
+      const tracksData = await readJsonResponse<{
+        error?: string;
+        ffmpegRequired?: boolean;
+        defaultAudioIndex?: number;
+        audio?: StreamTrack[];
+        subtitles?: StreamTrack[];
+        needsTranscode?: boolean;
+      }>(tracksRes);
 
       if (!tracksRes.ok) {
         if (opts.debridDirectPlay && opts.proxiedUrl) {
@@ -172,11 +212,13 @@ export default function WatchPage() {
       setSubtitleIndex(subtitle);
       setSourceUrl(opts.url ?? null);
       setSourcePath(opts.path ?? null);
+      setStreamSession(opts.session ?? null);
       if (opts.proxiedUrl) setProxiedStreamUrl(opts.proxiedUrl);
 
       if (opts.debridDirectPlay && opts.proxiedUrl) {
         if (subtitle !== null) {
           await startRemux({
+            session: opts.session,
             url: opts.url,
             path: opts.path,
             audio,
@@ -207,23 +249,31 @@ export default function WatchPage() {
       }
 
       await startTranscode({
+        session: opts.session,
         url: opts.url,
         path: opts.path,
         audio,
         subtitle,
       });
     },
-    [startTranscode, startRemux, proxiedStreamUrl]
+    [startTranscode, startRemux, proxiedStreamUrl, fetchMediaTracks]
   );
 
   const playRemoteStream = useCallback(
-    async (mediaItem: MediaItem, rawUrl: string, proxiedUrl: string, debrid = false) => {
+    async (
+      mediaItem: MediaItem,
+      rawUrl: string,
+      proxiedUrl: string,
+      debrid = false,
+      session?: string | null
+    ) => {
       const settings = getEffectiveSettings(storeSettings);
       const useDirectPlay = Boolean(settings.directPlay) && !forceTranscode;
       setIsDebridPlayback(debrid);
       setItem(mediaItem);
       await applyTrackedPlayback({
         url: rawUrl,
+        session,
         proxiedUrl,
         useDirectPlay,
         debridDirectPlay: debrid,
@@ -243,7 +293,12 @@ export default function WatchPage() {
           `/api/play/open?${playQuery}&streamIndex=${streamIndex}`,
           settings
         );
-        const data = await res.json();
+        const data = await readJsonResponse<{
+          error?: string;
+          streamUrl?: string;
+          streamSession?: string;
+          item?: MediaItem;
+        }>(res);
         if (!res.ok) throw new Error(data.error || "Failed to open stream");
 
         const selected = torrentStreams?.find((s) => s.index === streamIndex);
@@ -251,9 +306,14 @@ export default function WatchPage() {
         setTorrentStreams(null);
         setPlayQuery(null);
         const proxyUrl = data.streamUrl as string;
-        const match = proxyUrl.match(/[?&]url=([^&]+)/);
-        const rawUrl = match ? decodeURIComponent(match[1]) : proxyUrl;
-        await playRemoteStream(data.item ?? item!, rawUrl, proxyUrl, true);
+        setStreamSession(data.streamSession ?? null);
+        await playRemoteStream(
+          data.item ?? item!,
+          "",
+          proxyUrl,
+          true,
+          data.streamSession ?? null
+        );
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to open stream");
       } finally {
@@ -288,6 +348,7 @@ export default function WatchPage() {
       setOpeningStreamIndex(null);
       setStreamQuality(null);
       setIsDebridPlayback(false);
+      setStreamSession(null);
       setError("");
 
       const settings = getEffectiveSettings(storeSettings);
@@ -325,7 +386,12 @@ export default function WatchPage() {
             },
             body: JSON.stringify({ action: "resolve", torrentId }),
           });
-          const data = await res.json();
+          const data = await readJsonResponse<{
+            error?: string;
+            streamUrl?: string;
+            streamSession?: string;
+            filename?: string;
+          }>(res);
           if (!res.ok) throw new Error(data.error);
 
           setItem({
@@ -334,12 +400,13 @@ export default function WatchPage() {
             type: "movie",
             source: "debrid",
           });
-          setSourceUrl(data.streamUrl);
+          setSourceUrl(null);
+          setStreamSession(data.streamSession ?? null);
           setIsDebridPlayback(true);
 
           await applyTrackedPlayback({
-            url: data.streamUrl,
-            proxiedUrl: `/api/proxy/stream?url=${encodeURIComponent(data.streamUrl)}`,
+            session: data.streamSession ?? null,
+            proxiedUrl: data.streamUrl,
             useDirectPlay: true,
             debridDirectPlay: true,
           });
@@ -518,20 +585,32 @@ export default function WatchPage() {
 
   const handleAudioChange = useCallback(
     (index: number) => {
-      if (!sourceUrl && !sourcePath) return;
+      if (!sourceUrl && !sourcePath && !streamSession) return;
       setAudioIndex(index);
       if (isDebridPlayback) {
-        startRemux({ url: sourceUrl, path: sourcePath, audio: index, subtitle: subtitleIndex });
+        startRemux({
+          session: streamSession,
+          url: sourceUrl,
+          path: sourcePath,
+          audio: index,
+          subtitle: subtitleIndex,
+        });
         return;
       }
-      startTranscode({ url: sourceUrl, path: sourcePath, audio: index, subtitle: subtitleIndex });
+      startTranscode({
+        session: streamSession,
+        url: sourceUrl,
+        path: sourcePath,
+        audio: index,
+        subtitle: subtitleIndex,
+      });
     },
-    [sourceUrl, sourcePath, subtitleIndex, startTranscode, startRemux, isDebridPlayback]
+    [sourceUrl, sourcePath, streamSession, subtitleIndex, startTranscode, startRemux, isDebridPlayback]
   );
 
   const handleSubtitleChange = useCallback(
     (index: number | null) => {
-      if (!sourceUrl && !sourcePath) return;
+      if (!sourceUrl && !sourcePath && !streamSession) return;
       setSubtitleIndex(index);
       if (isDebridPlayback) {
         if (index === null && proxiedStreamUrl) {
@@ -539,11 +618,18 @@ export default function WatchPage() {
           setError("");
           return;
         }
-        startRemux({ url: sourceUrl, path: sourcePath, audio: audioIndex, subtitle: index });
+        startRemux({
+          session: streamSession,
+          url: sourceUrl,
+          path: sourcePath,
+          audio: audioIndex,
+          subtitle: index,
+        });
         return;
       }
       const settings = getEffectiveSettings(storeSettings);
       void applyTrackedPlayback({
+        session: streamSession,
         url: sourceUrl ?? undefined,
         path: sourcePath ?? undefined,
         proxiedUrl: proxiedStreamUrl ?? undefined,
@@ -554,6 +640,7 @@ export default function WatchPage() {
     [
       sourceUrl,
       sourcePath,
+      streamSession,
       audioIndex,
       proxiedStreamUrl,
       applyTrackedPlayback,
@@ -578,7 +665,7 @@ export default function WatchPage() {
     (streamUrl.includes("/api/proxy/stream") ||
       streamUrl.includes("/api/plex/stream"));
   const transcodeAvailable =
-    !isDebridPlayback && (!!sourceUrl || !!sourcePath || !!plexRatingKey);
+    !isDebridPlayback && (!!sourceUrl || !!sourcePath || !!streamSession || !!plexRatingKey);
   const hasTrackControls =
     audioTracks.length > 0 || subtitleTracks.length > 0;
 

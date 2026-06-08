@@ -7,15 +7,18 @@ import {
   type StreamTrack,
 } from "@/lib/ffmpeg";
 import { getLibraryPath } from "@/lib/env";
+import { resolveStreamInput } from "@/lib/stream-source";
 
 export async function GET(request: NextRequest) {
-  const url = request.nextUrl.searchParams.get("url");
-  const filePath = request.nextUrl.searchParams.get("path");
+  const resolved = resolveStreamInput(request);
   const audio = request.nextUrl.searchParams.get("audio");
   const subtitle = request.nextUrl.searchParams.get("subtitle");
 
-  if ((!url && !filePath) || audio === null) {
-    return NextResponse.json({ error: "Missing url/path or audio track" }, { status: 400 });
+  if ((!resolved.url && !resolved.path) || audio === null) {
+    return NextResponse.json(
+      { error: resolved.error ?? "Missing url/session/path or audio track" },
+      { status: 400 }
+    );
   }
 
   const audioIndex = parseInt(audio, 10);
@@ -25,28 +28,28 @@ export async function GET(request: NextRequest) {
       : parseInt(subtitle, 10);
 
   try {
-    let input = url ?? "";
+    let input = resolved.url ?? "";
     let subtitleCodec: string | undefined;
     let subtitlesForOrdinal: StreamTrack[] = [];
 
-    if (filePath) {
+    if (resolved.path) {
       const libraryPath = getLibraryPath();
       if (!libraryPath) {
         return NextResponse.json({ error: "LIBRARY_PATH not configured" }, { status: 400 });
       }
-      const resolved = path.resolve(filePath);
+      const filePath = path.resolve(resolved.path);
       const root = path.resolve(libraryPath);
-      if (!resolved.startsWith(root)) {
+      if (!filePath.startsWith(root)) {
         return NextResponse.json({ error: "Access denied" }, { status: 403 });
       }
-      input = resolved;
-      const probe = await probeMediaFile(resolved);
+      input = filePath;
+      const probe = await probeMediaFile(filePath);
       subtitlesForOrdinal = probe.subtitles;
       if (subtitleIndex !== null) {
         subtitleCodec = probe.subtitles.find((s) => s.index === subtitleIndex)?.codec;
       }
-    } else if (url) {
-      const probe = await probeMediaUrl(url);
+    } else if (resolved.url) {
+      const probe = await probeMediaUrl(resolved.url);
       subtitlesForOrdinal = probe.subtitles;
       if (subtitleIndex !== null) {
         subtitleCodec = probe.subtitles.find((s) => s.index === subtitleIndex)?.codec;
