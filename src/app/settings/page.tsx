@@ -717,8 +717,12 @@ export default function SettingsPage() {
           <h2 className="mb-4 text-xl font-semibold">Playback</h2>
           <p className="mb-4 text-sm text-netflix-light-gray">
             Direct play streams the original file with no server transcoding — fastest and best quality
-            when your browser supports the codec (H.264 + AAC). Use transcode for HEVC, AC3/DTS audio, or
-            subtitle/audio track selection on Real-Debrid.
+            on CPU-only servers. Works when the file is <strong className="text-white">H.264 video + AAC
+            or MP3 audio</strong> (typical MP4/MKV). Surround tracks (AC3/DTS), XviD/AVI, or subtitles
+            require ffmpeg on the server; set <code className="text-white">HERO_VIDEO=false</code> in{" "}
+            <code className="text-white">.env</code> to skip hero marquee transcoding and use the backdrop
+            photo only. When Plex is connected, playback goes through Plex first (use Plex transcode there
+            for legacy formats instead of loading this container&apos;s CPU).
           </p>
           <label className="flex cursor-pointer items-center gap-3">
             <input

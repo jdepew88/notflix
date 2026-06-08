@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { startHlsTranscode } from "@/lib/ffmpeg";
+import { probeMediaFile, probeMediaUrl, isBrowserAudioCodec, startHlsTranscode } from "@/lib/ffmpeg";
 import { resolveAccessibleLibraryFile, resolveLibraryRoot } from "@/lib/library-playback";
 import { mergeSettingsForServerOps } from "@/lib/settings";
 
@@ -35,12 +35,31 @@ export async function GET(request: NextRequest) {
       : parseInt(subtitle, 10);
 
   try {
+    let transcodeVideo = false;
+    let copyAudio = false;
+    if (filePath && libraryRoot) {
+      const resolved = resolveAccessibleLibraryFile(filePath, libraryRoot);
+      if (resolved) {
+        const probe = await probeMediaFile(resolved);
+        transcodeVideo = probe.needsVideoTranscode;
+        const selectedAudio = probe.audio.find((a) => a.index === audioIndex);
+        copyAudio = Boolean(selectedAudio && isBrowserAudioCodec(selectedAudio.codec));
+      }
+    } else if (url) {
+      const probe = await probeMediaUrl(url);
+      transcodeVideo = probe.needsVideoTranscode;
+      const selectedAudio = probe.audio.find((a) => a.index === audioIndex);
+      copyAudio = Boolean(selectedAudio && isBrowserAudioCodec(selectedAudio.codec));
+    }
+
     const { session } = await startHlsTranscode(
       input,
       audioIndex,
       subtitleIndex,
       subtitleCodec,
-      []
+      [],
+      transcodeVideo,
+      copyAudio
     );
     return NextResponse.json({
       streamUrl: `/api/debrid/hls/${session}/master.m3u8`,

@@ -18,7 +18,7 @@ interface HeroBannerProps {
 
 const HERO_POLL_MS = 2000;
 const HERO_POLL_ATTEMPTS = 45;
-const HERO_STALL_MS = 4000;
+const HERO_STALL_MS = 8000;
 
 interface HeroStatusResponse {
   featuredId?: string;
@@ -44,20 +44,25 @@ export function HeroBanner({ item: initialItem, videoError, onHeroItemChange }: 
   const [muted, setMuted] = useState(true);
   const [showVideo, setShowVideo] = useState(false);
   const videoDisabledRef = useRef(false);
+  const onHeroItemChangeRef = useRef(onHeroItemChange);
+  onHeroItemChangeRef.current = onHeroItemChange;
 
   const tmdbId =
     heroItem.tmdbId ??
     (heroItem.id.startsWith("tmdb-") ? parseInt(heroItem.id.replace("tmdb-", ""), 10) : null);
 
   const isLibraryHero =
-    heroItem.source === "library" ||
-    heroItem.id.startsWith("plex-") ||
-    Boolean(heroItem.plexPartKey);
+    initialItem.source === "library" ||
+    initialItem.id.startsWith("plex-") ||
+    Boolean(initialItem.plexPartKey);
 
   useEffect(() => {
     setHeroItem(initialItem);
+  }, [initialItem]);
+
+  useEffect(() => {
     setHeroError(videoError ?? null);
-  }, [initialItem, videoError]);
+  }, [videoError]);
 
   const revertToPhoto = useCallback(() => {
     videoDisabledRef.current = true;
@@ -67,28 +72,25 @@ export function HeroBanner({ item: initialItem, videoError, onHeroItemChange }: 
     setTrailerKey(null);
   }, []);
 
-  const applyStatus = useCallback(
-    (data: HeroStatusResponse) => {
-      if (data.item) {
-        setHeroItem(data.item);
-        onHeroItemChange?.(data.item, data.error ?? null);
-      }
-      if (data.error) {
-        setHeroError(data.error);
-      } else if (data.videoReady) {
-        setHeroError(null);
-      }
-      if (videoDisabledRef.current) return false;
-      if (data.videoReady && data.videoUrl) {
-        setLocalVideoUrl(data.videoUrl);
-        setVideoMode("local");
-        setShowVideo(true);
-        return true;
-      }
-      return false;
-    },
-    [onHeroItemChange]
-  );
+  const applyStatus = useCallback((data: HeroStatusResponse) => {
+    if (data.item) {
+      setHeroItem(data.item);
+      onHeroItemChangeRef.current?.(data.item, data.error ?? null);
+    }
+    if (data.error) {
+      setHeroError(data.error);
+    } else if (data.videoReady) {
+      setHeroError(null);
+    }
+    if (videoDisabledRef.current) return false;
+    if (data.videoReady && data.videoUrl) {
+      setLocalVideoUrl(data.videoUrl);
+      setVideoMode("local");
+      setShowVideo(true);
+      return true;
+    }
+    return false;
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -131,9 +133,7 @@ export function HeroBanner({ item: initialItem, videoError, onHeroItemChange }: 
       if (isLibraryHero) {
         const ready = await pollHeroStatus();
         if (ready || cancelled || videoDisabledRef.current) return;
-        if (!heroError) {
-          await loadTrailer();
-        }
+        await loadTrailer();
         return;
       }
       await loadTrailer();
@@ -149,7 +149,7 @@ export function HeroBanner({ item: initialItem, videoError, onHeroItemChange }: 
     return () => {
       cancelled = true;
     };
-  }, [heroItem.id, tmdbId, isLibraryHero, applyStatus, heroError, revertToPhoto]);
+  }, [initialItem.id, tmdbId, isLibraryHero, applyStatus, revertToPhoto]);
 
   useEffect(() => {
     if (videoRef.current) {
@@ -164,9 +164,19 @@ export function HeroBanner({ item: initialItem, videoError, onHeroItemChange }: 
 
     let lastTime = video.currentTime;
     let lastAdvance = Date.now();
+    let hasStarted = false;
+
+    const markStarted = () => {
+      hasStarted = true;
+      lastAdvance = Date.now();
+      lastTime = video.currentTime;
+    };
+
+    video.addEventListener("playing", markStarted);
+    video.addEventListener("canplay", markStarted);
 
     const timer = window.setInterval(() => {
-      if (video.paused || video.ended) return;
+      if (!hasStarted || video.paused || video.ended) return;
       if (video.currentTime > lastTime + 0.05) {
         lastTime = video.currentTime;
         lastAdvance = Date.now();
@@ -177,7 +187,11 @@ export function HeroBanner({ item: initialItem, videoError, onHeroItemChange }: 
       }
     }, 1000);
 
-    return () => window.clearInterval(timer);
+    return () => {
+      window.clearInterval(timer);
+      video.removeEventListener("playing", markStarted);
+      video.removeEventListener("canplay", markStarted);
+    };
   }, [showVideo, videoMode, localVideoUrl, revertToPhoto]);
 
   const handleVideoError = () => {
@@ -188,28 +202,7 @@ export function HeroBanner({ item: initialItem, videoError, onHeroItemChange }: 
 
   return (
     <section className="relative h-[56vw] max-h-[80vh] min-h-[280px] w-full md:min-h-[400px] lg:min-h-[500px]">
-      {hasVideo && videoMode === "local" && localVideoUrl ? (
-        <div className="absolute inset-0 overflow-hidden">
-          <video
-            ref={videoRef}
-            src={localVideoUrl}
-            autoPlay
-            muted
-            playsInline
-            className="pointer-events-none absolute left-1/2 top-1/2 h-[56.25vw] min-h-full min-w-full w-[177.78vh] -translate-x-1/2 -translate-y-1/2 object-cover"
-            onError={handleVideoError}
-          />
-        </div>
-      ) : hasVideo && videoMode === "youtube" && trailerKey ? (
-        <div className="absolute inset-0 overflow-hidden">
-          <iframe
-            src={`https://www.youtube.com/embed/${trailerKey}?autoplay=1&mute=${muted ? 1 : 0}&controls=0&loop=1&playlist=${trailerKey}&modestbranding=1&rel=0&showinfo=0`}
-            className="pointer-events-none absolute left-1/2 top-1/2 h-[56.25vw] min-h-full min-w-full w-[177.78vh] -translate-x-1/2 -translate-y-1/2"
-            allow="autoplay; encrypted-media"
-            title={heroItem.title}
-          />
-        </div>
-      ) : backdrop ? (
+      {backdrop ? (
         <MediaImage
           src={backdrop}
           alt={heroItem.title}
@@ -222,8 +215,31 @@ export function HeroBanner({ item: initialItem, videoError, onHeroItemChange }: 
         <div className="absolute inset-0 bg-gradient-to-br from-zinc-900 via-zinc-800 to-black" />
       )}
 
-      <div className="netflix-gradient-hero absolute inset-0" />
-      <div className="netflix-gradient-bottom absolute inset-x-0 bottom-0 h-32" />
+      {hasVideo && videoMode === "local" && localVideoUrl ? (
+        <div className="absolute inset-0 z-[1] overflow-hidden">
+          <video
+            ref={videoRef}
+            src={localVideoUrl}
+            autoPlay
+            muted
+            playsInline
+            className="pointer-events-none absolute left-1/2 top-1/2 h-[56.25vw] min-h-full min-w-full w-[177.78vh] -translate-x-1/2 -translate-y-1/2 object-cover"
+            onError={handleVideoError}
+          />
+        </div>
+      ) : hasVideo && videoMode === "youtube" && trailerKey ? (
+        <div className="absolute inset-0 z-[1] overflow-hidden">
+          <iframe
+            src={`https://www.youtube.com/embed/${trailerKey}?autoplay=1&mute=${muted ? 1 : 0}&controls=0&loop=1&playlist=${trailerKey}&modestbranding=1&rel=0&showinfo=0`}
+            className="pointer-events-none absolute left-1/2 top-1/2 h-[56.25vw] min-h-full min-w-full w-[177.78vh] -translate-x-1/2 -translate-y-1/2"
+            allow="autoplay; encrypted-media"
+            title={heroItem.title}
+          />
+        </div>
+      ) : null}
+
+      <div className="netflix-gradient-hero absolute inset-0 z-[2]" />
+      <div className="netflix-gradient-bottom absolute inset-x-0 bottom-0 z-[2] h-32" />
 
       {heroError && (
         <div className="absolute left-4 right-4 top-4 z-20 flex items-start gap-2 rounded-md border border-yellow-500/40 bg-black/70 px-3 py-2 text-sm text-yellow-100 backdrop-blur md:left-12 md:max-w-xl">

@@ -2,21 +2,10 @@ import fs from "fs/promises";
 import path from "path";
 import type { MediaItem } from "./types";
 import { slugifyMediaTitle } from "./media-slug";
-
-const VIDEO_EXTENSIONS = new Set([
-  ".mkv",
-  ".mp4",
-  ".avi",
-  ".mov",
-  ".wmv",
-  ".m4v",
-  ".webm",
-  ".ts",
-  ".m2ts",
-]);
+import { isVideoExtension, videoMimeType } from "./video-formats";
 
 function isVideoFile(filename: string): boolean {
-  return VIDEO_EXTENSIONS.has(path.extname(filename).toLowerCase());
+  return isVideoExtension(filename);
 }
 
 function slugify(text: string): string {
@@ -169,16 +158,5 @@ export function buildContentRows(items: MediaItem[]): Array<{
 }
 
 export function getMimeType(filePath: string): string {
-  const ext = path.extname(filePath).toLowerCase();
-  const mimeMap: Record<string, string> = {
-    ".mp4": "video/mp4",
-    ".mkv": "video/x-matroska",
-    ".avi": "video/x-msvideo",
-    ".mov": "video/quicktime",
-    ".wmv": "video/x-ms-wmv",
-    ".m4v": "video/x-m4v",
-    ".webm": "video/webm",
-    ".ts": "video/mp2t",
-  };
-  return mimeMap[ext] ?? "application/octet-stream";
+  return videoMimeType(filePath);
 }

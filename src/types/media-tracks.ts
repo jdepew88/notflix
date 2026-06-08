@@ -13,8 +13,10 @@ export interface StreamTrack {
 export interface ProbeResult {
   format: string;
   duration?: number;
+  videoCodec?: string;
   audio: StreamTrack[];
   subtitles: StreamTrack[];
+  needsVideoTranscode?: boolean;
   needsTranscode: boolean;
   defaultAudioIndex?: number;
   defaultSubtitleIndex?: number | null;

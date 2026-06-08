@@ -10,6 +10,7 @@ import {
   initHeroManifest,
   resolveHeroVideoCandidates,
 } from "./hero-cache";
+import { isHeroVideoEnabled } from "./ffmpeg-config";
 
 export function syncHeroToLibraryCache(
   status: ReturnType<typeof getHeroStatus>
@@ -27,6 +28,8 @@ export async function initializeAndResolveHeroVideo(
   settings: ServerSettings,
   previousFeaturedId?: string | null
 ): Promise<void> {
+  if (!isHeroVideoEnabled()) return;
+
   const candidates = pickHeroCandidates(items, previousFeaturedId, 3);
   if (candidates.length === 0) {
     updateLibraryCacheHero(null, null, null);
@@ -53,6 +56,8 @@ export async function resolveHeroVideoWithSync(
   settings: ServerSettings,
   options?: { markFailedId?: string; reason?: string }
 ): Promise<ReturnType<typeof getHeroStatus>> {
+  if (!isHeroVideoEnabled()) return getHeroStatus();
+
   const cache = readLibraryCache();
   if (!cache) return null;
 

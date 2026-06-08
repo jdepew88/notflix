@@ -14,6 +14,8 @@ services:
       # PLEX_URL + PLEX_TOKEN: set in .env (use your LAN IP, e.g. http://172.16.x.x:32400)
       LIBRARY_PATH: /media/Video
       DATA_PATH: /app/data
+      DIRECT_PLAY: "true"
+      HERO_VIDEO: "false"
     volumes:
       - /mnt/user/Media:/media:ro
       - /mnt/user/appdata/notflix/data:/app/data

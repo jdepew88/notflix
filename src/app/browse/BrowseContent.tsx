@@ -101,6 +101,11 @@ export function BrowseContent() {
   const sentinelRef = useRef<HTMLDivElement>(null);
   const loadGenerationRef = useRef(0);
 
+  const handleHeroItemChange = useCallback((item: MediaItem, error: string | null) => {
+    setHero(item);
+    setHeroVideoError(error);
+  }, []);
+
   const buildRowsFromLibrary = useCallback(
     (
       libData: {
@@ -352,10 +357,7 @@ export function BrowseContent() {
         <HeroBanner
           item={displayHero}
           videoError={heroVideoError}
-          onHeroItemChange={(item, error) => {
-            setHero(item);
-            setHeroVideoError(error);
-          }}
+          onHeroItemChange={handleHeroItemChange}
         />
       )}
       <div className={displayHero ? "-mt-16 relative z-10" : "pt-4"}>

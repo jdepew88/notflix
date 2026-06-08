@@ -51,6 +51,14 @@ export function logStartupConfig(): void {
   const debridStatus = getRealDebridToken() ? "[configured]" : "(not set)";
   const torrentioStatus = getTorrentioUrl() ? "[configured]" : "(not set)";
   const peerflixStatus = getPeerflixUrl() ? "[configured]" : "(default addon)";
+  const directPlay = process.env.DIRECT_PLAY !== "false";
+  const heroVideo = process.env.HERO_VIDEO?.trim().toLowerCase();
+  const heroEnabled = !(
+    heroVideo === "0" ||
+    heroVideo === "false" ||
+    heroVideo === "off" ||
+    heroVideo === "no"
+  );
 
   console.log("[notflix] Server configuration");
   console.log(`[notflix]   PORT=${port}`);
@@ -60,4 +68,7 @@ export function logStartupConfig(): void {
   console.log(`[notflix]   REAL_DEBRID_TOKEN=${debridStatus}`);
   console.log(`[notflix]   TORRENTIO_URL=${torrentioStatus}`);
   console.log(`[notflix]   PEERFLIX_URL=${peerflixStatus}`);
+  console.log(`[notflix]   DIRECT_PLAY=${directPlay}`);
+  console.log(`[notflix]   HERO_VIDEO=${heroEnabled}`);
+  console.log("[notflix]   ffmpeg=software libx264 (no GPU hwaccel)");
 }

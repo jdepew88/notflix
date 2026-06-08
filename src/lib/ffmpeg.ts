@@ -3,6 +3,7 @@ import fs from "fs";
 import fsPromises from "fs/promises";
 import path from "path";
 import crypto from "crypto";
+import { ffmpegThreadArgs, getFfmpegPreset, getFfmpegTuneArgs } from "./ffmpeg-config";
 
 export interface StreamTrack {
   index: number;
@@ -19,8 +20,10 @@ export interface StreamTrack {
 export interface ProbeResult {
   format: string;
   duration?: number;
+  videoCodec?: string;
   audio: StreamTrack[];
   subtitles: StreamTrack[];
+  needsVideoTranscode: boolean;
   needsTranscode: boolean;
 }
 
@@ -28,6 +31,24 @@ const CACHE_DIR = path.join(/* turbopackIgnore: true */ process.cwd(), ".cache",
 
 const BROWSER_AUDIO = new Set(["aac", "mp3", "opus", "flac", "vorbis"]);
 const TRANSCODE_AUDIO = new Set(["ac3", "eac3", "dts", "truehd", "dts_hd_ma", "dts-hd", "pcm_s16le"]);
+const BROWSER_VIDEO = new Set(["h264", "hevc", "h265", "vp8", "vp9", "av1"]);
+
+export function isBrowserVideoCodec(codec: string): boolean {
+  const c = codec.toLowerCase();
+  if (BROWSER_VIDEO.has(c)) return true;
+  if (c.startsWith("h264") || c.includes("avc")) return true;
+  return false;
+}
+
+export function isBrowserAudioCodec(codec: string): boolean {
+  const c = codec.toLowerCase();
+  return BROWSER_AUDIO.has(c) && !TRANSCODE_AUDIO.has(c);
+}
+
+export function trackNeedsTranscode(track: StreamTrack | undefined): boolean {
+  if (!track) return true;
+  return !isBrowserAudioCodec(track.codec);
+}
 
 let resolvedBinaries: { ffmpeg: string; ffprobe: string } | null = null;
 
@@ -173,8 +194,12 @@ function parseProbeOutput(output: string): ProbeResult {
 
   const audio: StreamTrack[] = [];
   const subtitles: StreamTrack[] = [];
+  let videoCodec: string | undefined;
 
   for (const stream of data.streams ?? []) {
+    if (stream.codec_type === "video" && !videoCodec) {
+      videoCodec = stream.codec_name || "unknown";
+    }
     if (stream.codec_type === "audio") {
       audio.push({
         index: stream.index,
@@ -201,17 +226,23 @@ function parseProbeOutput(output: string): ProbeResult {
     }
   }
 
-  const needsTranscode = audio.some((a) => {
-    const c = a.codec.toLowerCase();
-    return TRANSCODE_AUDIO.has(c) || !BROWSER_AUDIO.has(c);
-  });
+  const defaultAudioIndex = defaultAudioTrack(audio);
+  const selectedAudio = audio.find((a) => a.index === defaultAudioIndex);
+  const needsAudioTranscode = audio.length === 0 || trackNeedsTranscode(selectedAudio);
+
+  const formatName = data.format?.format_name || "unknown";
+  const needsVideoTranscode = videoCodec
+    ? !isBrowserVideoCodec(videoCodec)
+    : /avi|xvid|asf|wmv|mpeg/i.test(formatName);
 
   return {
-    format: data.format?.format_name || "unknown",
+    format: formatName,
     duration: data.format?.duration ? parseFloat(data.format.duration) : undefined,
+    videoCodec,
     audio,
     subtitles,
-    needsTranscode: needsTranscode || audio.length === 0,
+    needsVideoTranscode,
+    needsTranscode: needsAudioTranscode || needsVideoTranscode || audio.length === 0,
   };
 }
 
@@ -315,10 +346,15 @@ export function defaultAudioTrack(audio: StreamTrack[]): number {
   return audio[0]?.index ?? 0;
 }
 
-export function sessionId(input: string, audioIndex: number, subtitleIndex: number): string {
+export function sessionId(
+  input: string,
+  audioIndex: number,
+  subtitleIndex: number,
+  videoMode: "copy" | "transcode" = "copy"
+): string {
   return crypto
     .createHash("sha256")
-    .update(`${input}|${audioIndex}|${subtitleIndex}`)
+    .update(`${input}|${audioIndex}|${subtitleIndex}|${videoMode}`)
     .digest("hex")
     .slice(0, 16);
 }
@@ -355,9 +391,22 @@ export async function startHlsTranscode(
   audioStreamIndex: number,
   subtitleStreamIndex: number | null,
   subtitleCodec?: string,
-  subtitlesForOrdinal: StreamTrack[] = []
+  subtitlesForOrdinal: StreamTrack[] = [],
+  transcodeVideo = false,
+  copyAudio = false
 ): Promise<{ session: string; manifestPath: string }> {
-  const session = sessionId(input, audioStreamIndex, subtitleStreamIndex ?? -1);
+  const burnInImageSub =
+    subtitleStreamIndex !== null &&
+    subtitleStreamIndex >= 0 &&
+    Boolean(subtitleCodec) &&
+    !isTextSubtitleCodec(subtitleCodec!);
+  const encodeVideo = transcodeVideo || burnInImageSub;
+  const session = sessionId(
+    input,
+    audioStreamIndex,
+    subtitleStreamIndex ?? -1,
+    encodeVideo ? "transcode" : "copy"
+  );
   const outDir = cachePath(session);
   const manifestPath = path.join(outDir, "master.m3u8");
   const isRemote = /^https?:\/\//i.test(input);
@@ -388,12 +437,6 @@ export async function startHlsTranscode(
             ]
           : [];
 
-        const burnInImageSub =
-          subtitleStreamIndex !== null &&
-          subtitleStreamIndex >= 0 &&
-          subtitleCodec &&
-          !isTextSubtitleCodec(subtitleCodec);
-
         const subOrdinal =
           subtitleStreamIndex !== null && subtitleStreamIndex >= 0
             ? subtitleStreamOrdinal(subtitlesForOrdinal, subtitleStreamIndex)
@@ -401,6 +444,7 @@ export async function startHlsTranscode(
 
         const args = [
           ...inputArgs,
+          ...ffmpegThreadArgs(),
           "-i",
           input,
           "-map",
@@ -408,17 +452,22 @@ export async function startHlsTranscode(
           "-map",
           `0:${audioStreamIndex}`,
           "-c:v",
-          burnInImageSub ? "libx264" : "copy",
-          ...(burnInImageSub ? ["-preset", "ultrafast"] : []),
+          encodeVideo ? "libx264" : "copy",
+          ...(encodeVideo
+            ? [
+                "-preset",
+                getFfmpegPreset(),
+                ...getFfmpegTuneArgs(),
+                "-pix_fmt",
+                "yuv420p",
+              ]
+            : []),
           ...(burnInImageSub
             ? ["-vf", `subtitles=${subtitleFilterPath(input)}:si=${subOrdinal}`]
             : []),
           "-c:a",
-          "aac",
-          "-b:a",
-          "192k",
-          "-ac",
-          "2",
+          copyAudio ? "copy" : "aac",
+          ...(copyAudio ? [] : ["-b:a", "192k", "-ac", "2"]),
         ];
 
         if (subtitleStreamIndex !== null && subtitleStreamIndex >= 0 && !burnInImageSub) {

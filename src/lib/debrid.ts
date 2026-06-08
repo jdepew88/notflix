@@ -112,7 +112,7 @@ export async function deleteTorrent(token: string, id: string): Promise<void> {
   });
 }
 
-const VIDEO_EXTENSIONS = [".mkv", ".mp4", ".avi", ".mov", ".wmv", ".m4v", ".webm"];
+const VIDEO_EXTENSIONS = [".mkv", ".mp4", ".avi", ".xvid", ".mov", ".wmv", ".m4v", ".webm"];
 
 export function isVideoFile(path: string): boolean {
   const lower = path.toLowerCase();

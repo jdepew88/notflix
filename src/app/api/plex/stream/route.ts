@@ -55,5 +55,6 @@ function guessMime(partKey: string): string {
   if (lower.endsWith(".mkv")) return "video/x-matroska";
   if (lower.endsWith(".mp4") || lower.endsWith(".m4v")) return "video/mp4";
   if (lower.endsWith(".webm")) return "video/webm";
+  if (lower.endsWith(".avi") || lower.endsWith(".xvid")) return "video/x-msvideo";
   return "video/mp4";
 }

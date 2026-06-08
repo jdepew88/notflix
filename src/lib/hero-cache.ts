@@ -7,6 +7,12 @@ import type { ServerSettings } from "./server-settings";
 import { getDataPath } from "./data-path";
 import { getFfmpegPath, isFfmpegAvailable } from "./ffmpeg";
 import { mapHostPathToContainer } from "./library-path";
+import {
+  ffmpegThreadArgs,
+  getFfmpegPreset,
+  getFfmpegTuneArgs,
+  isHeroVideoEnabled,
+} from "./ffmpeg-config";
 
 export interface HeroManifest {
   primaryFeaturedId: string;
@@ -197,6 +203,10 @@ async function generateHeroPreview(
   item: MediaItem,
   settings: ServerSettings
 ): Promise<boolean> {
+  if (!isHeroVideoEnabled()) {
+    throw new Error("Hero preview video disabled (HERO_VIDEO=false)");
+  }
+
   const input = resolvePreviewInput(item, settings);
   if (!input) throw new Error("No stream source for hero preview");
 
@@ -224,6 +234,7 @@ async function generateHeroPreview(
           "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         ]
       : []),
+    ...ffmpegThreadArgs(),
     "-ss",
     "45",
     "-i",
@@ -236,7 +247,8 @@ async function generateHeroPreview(
     "-c:v",
     "libx264",
     "-preset",
-    "ultrafast",
+    getFfmpegPreset(),
+    ...getFfmpegTuneArgs(),
     "-movflags",
     "+faststart",
     "-y",
@@ -414,7 +426,7 @@ export function scheduleHeroPreview(
   allItems: MediaItem[],
   settings: ServerSettings
 ): void {
-  if (candidates.length === 0) return;
+  if (!isHeroVideoEnabled() || candidates.length === 0) return;
   initHeroManifest(candidates);
   void resolveHeroVideoCandidates(allItems, settings).catch((err) => {
     console.warn("[hero-cache] Hero resolve failed:", err);

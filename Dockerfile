@@ -20,7 +20,8 @@ ENV NEXT_TELEMETRY_DISABLED=1
 ENV PORT=3000
 ENV HOSTNAME=0.0.0.0
 
-# Real-Debrid audio transcode (AC3/DTS → AAC)
+# Real-Debrid audio transcode (AC3/DTS → AAC) when direct play is not possible.
+# Software-only libx264 — no GPU, Quick Sync, or NVENC required or used.
 RUN apk add --no-cache ffmpeg
 
 RUN addgroup --system --gid 1001 nodejs \

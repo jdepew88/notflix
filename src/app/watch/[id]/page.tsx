@@ -16,6 +16,7 @@ import type { MediaItem } from "@/lib/types";
 import type { StreamTrack } from "@/types/media-tracks";
 import type { TorrentioStreamOption } from "@/lib/torrentio";
 import { libraryStreamUrl, mappedLibraryFilePath } from "@/lib/library-playback";
+import { isLegacyVideoExtension } from "@/lib/video-formats";
 import { readJsonResponse } from "@/lib/fetch-json";
 
 function buildPlayQuery(opts: {
@@ -191,6 +192,12 @@ export default function WatchPage() {
           return;
         }
         if (tracksData.ffmpegRequired && opts.proxiedUrl) {
+          if (opts.path && isLegacyVideoExtension(opts.path)) {
+            throw new Error(
+              tracksData.error ||
+                "ffmpeg is required to play AVI and XviD files in the browser."
+            );
+          }
           setStreamUrl(opts.proxiedUrl);
           setError(
             tracksData.error ||

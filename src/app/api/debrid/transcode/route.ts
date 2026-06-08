@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { startHlsTranscode, probeMediaUrl, probeMediaFile, type StreamTrack } from "@/lib/ffmpeg";
+import { startHlsTranscode, probeMediaUrl, probeMediaFile, isBrowserAudioCodec, type StreamTrack } from "@/lib/ffmpeg";
 import { resolveAccessibleLibraryFile, resolveLibraryRoot } from "@/lib/library-playback";
 import { mergeSettingsForServerOps } from "@/lib/settings";
 import { resolveStreamInput } from "@/lib/stream-source";
@@ -28,6 +28,8 @@ export async function GET(request: NextRequest) {
     let input = resolved.url ?? "";
     let subtitleCodec: string | undefined;
     let subtitlesForOrdinal: StreamTrack[] = [];
+    let transcodeVideo = false;
+    let copyAudio = false;
 
     if (resolved.path) {
       if (!libraryRoot) {
@@ -40,12 +42,18 @@ export async function GET(request: NextRequest) {
       input = filePath;
       const probe = await probeMediaFile(filePath);
       subtitlesForOrdinal = probe.subtitles;
+      transcodeVideo = probe.needsVideoTranscode;
+      const selectedAudio = probe.audio.find((a) => a.index === audioIndex);
+      copyAudio = Boolean(selectedAudio && isBrowserAudioCodec(selectedAudio.codec));
       if (subtitleIndex !== null) {
         subtitleCodec = probe.subtitles.find((s) => s.index === subtitleIndex)?.codec;
       }
     } else if (resolved.url) {
       const probe = await probeMediaUrl(resolved.url);
       subtitlesForOrdinal = probe.subtitles;
+      transcodeVideo = probe.needsVideoTranscode;
+      const selectedAudio = probe.audio.find((a) => a.index === audioIndex);
+      copyAudio = Boolean(selectedAudio && isBrowserAudioCodec(selectedAudio.codec));
       if (subtitleIndex !== null) {
         subtitleCodec = probe.subtitles.find((s) => s.index === subtitleIndex)?.codec;
       }
@@ -56,7 +64,9 @@ export async function GET(request: NextRequest) {
       audioIndex,
       subtitleIndex,
       subtitleCodec,
-      subtitlesForOrdinal
+      subtitlesForOrdinal,
+      transcodeVideo,
+      copyAudio
     );
     return NextResponse.json({
       streamUrl: `/api/debrid/hls/${session}/master.m3u8`,
