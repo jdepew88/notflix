@@ -12,6 +12,7 @@ services:
       PORT: 3000
       HOSTNAME: 0.0.0.0
       PLEX_URL: http://10.10.0.8:32800
+      # Set PLEX_TOKEN in .env (required for Plex sync when not using Settings sign-in)
       LIBRARY_PATH: /media
       DATA_PATH: /app/data
     volumes:

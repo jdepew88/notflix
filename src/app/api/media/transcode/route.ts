@@ -1,9 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import path from "path";
 import { startHlsTranscode } from "@/lib/ffmpeg";
-import { getLibraryPath } from "@/lib/env";
+import { resolveAccessibleLibraryFile, resolveLibraryRoot } from "@/lib/library-playback";
+import { mergeSettingsForServerOps } from "@/lib/settings";
 
 export async function GET(request: NextRequest) {
+  const settings = mergeSettingsForServerOps(request);
+  const libraryRoot = resolveLibraryRoot(settings);
   const url = request.nextUrl.searchParams.get("url");
   const filePath = request.nextUrl.searchParams.get("path");
   const audio = request.nextUrl.searchParams.get("audio");
@@ -16,13 +18,11 @@ export async function GET(request: NextRequest) {
 
   let input = url ?? "";
   if (filePath) {
-    const libraryPath = getLibraryPath();
-    if (!libraryPath) {
-      return NextResponse.json({ error: "LIBRARY_PATH not configured" }, { status: 400 });
+    if (!libraryRoot) {
+      return NextResponse.json({ error: "Library path not configured" }, { status: 400 });
     }
-    const resolved = path.resolve(filePath);
-    const root = path.resolve(libraryPath);
-    if (!resolved.startsWith(root)) {
+    const resolved = resolveAccessibleLibraryFile(filePath, libraryRoot);
+    if (!resolved) {
       return NextResponse.json({ error: "Access denied" }, { status: 403 });
     }
     input = resolved;

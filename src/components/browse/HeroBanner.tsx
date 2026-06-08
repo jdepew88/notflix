@@ -18,6 +18,7 @@ interface HeroBannerProps {
 
 const HERO_POLL_MS = 2000;
 const HERO_POLL_ATTEMPTS = 45;
+const HERO_STALL_MS = 4000;
 
 interface HeroStatusResponse {
   featuredId?: string;
@@ -37,12 +38,12 @@ export function HeroBanner({ item: initialItem, videoError, onHeroItemChange }: 
   const backdrop = backdropUrl(heroItem.backdropPath);
   const watchHref = watchHrefForItem(heroItem);
   const videoRef = useRef<HTMLVideoElement>(null);
-  const fallbackInFlight = useRef(false);
   const [trailerKey, setTrailerKey] = useState<string | null>(null);
   const [localVideoUrl, setLocalVideoUrl] = useState<string | null>(null);
   const [videoMode, setVideoMode] = useState<"local" | "youtube" | null>(null);
   const [muted, setMuted] = useState(true);
   const [showVideo, setShowVideo] = useState(false);
+  const videoDisabledRef = useRef(false);
 
   const tmdbId =
     heroItem.tmdbId ??
@@ -58,6 +59,14 @@ export function HeroBanner({ item: initialItem, videoError, onHeroItemChange }: 
     setHeroError(videoError ?? null);
   }, [initialItem, videoError]);
 
+  const revertToPhoto = useCallback(() => {
+    videoDisabledRef.current = true;
+    setLocalVideoUrl(null);
+    setShowVideo(false);
+    setVideoMode(null);
+    setTrailerKey(null);
+  }, []);
+
   const applyStatus = useCallback(
     (data: HeroStatusResponse) => {
       if (data.item) {
@@ -69,6 +78,7 @@ export function HeroBanner({ item: initialItem, videoError, onHeroItemChange }: 
       } else if (data.videoReady) {
         setHeroError(null);
       }
+      if (videoDisabledRef.current) return false;
       if (data.videoReady && data.videoUrl) {
         setLocalVideoUrl(data.videoUrl);
         setVideoMode("local");
@@ -80,33 +90,14 @@ export function HeroBanner({ item: initialItem, videoError, onHeroItemChange }: 
     [onHeroItemChange]
   );
 
-  const requestFallback = useCallback(
-    async (failedId: string, reason: string) => {
-      if (fallbackInFlight.current) return null;
-      fallbackInFlight.current = true;
-      try {
-        const res = await fetch("/api/hero/fallback", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ id: failedId, reason }),
-        });
-        const data = (await res.json()) as HeroStatusResponse;
-        applyStatus(data);
-        return data;
-      } finally {
-        fallbackInFlight.current = false;
-      }
-    },
-    [applyStatus]
-  );
-
   useEffect(() => {
     let cancelled = false;
+    videoDisabledRef.current = false;
 
     async function loadTrailer() {
-      if (!tmdbId || cancelled) return;
+      if (!tmdbId || cancelled || videoDisabledRef.current) return;
       const res = await fetch(`/api/catalog?type=videos&id=${tmdbId}`).catch(() => null);
-      if (cancelled || !res?.ok) return;
+      if (cancelled || !res?.ok || videoDisabledRef.current) return;
       const data = await res.json().catch(() => null);
       if (data?.key) {
         setTrailerKey(data.key);
@@ -117,7 +108,7 @@ export function HeroBanner({ item: initialItem, videoError, onHeroItemChange }: 
 
     async function pollHeroStatus(): Promise<boolean> {
       for (let attempt = 0; attempt < HERO_POLL_ATTEMPTS; attempt++) {
-        if (cancelled) return false;
+        if (cancelled || videoDisabledRef.current) return false;
         const resolve = attempt === 0 ? "?resolve=1" : "";
         const res = await fetch(`/api/hero/status${resolve}`).catch(() => null);
         if (cancelled || !res?.ok) {
@@ -128,8 +119,7 @@ export function HeroBanner({ item: initialItem, videoError, onHeroItemChange }: 
         if (applyStatus(data)) return true;
         if (data.exhausted) {
           setHeroError(data.error ?? "Marquee video unavailable");
-          setLocalVideoUrl(null);
-          setShowVideo(false);
+          revertToPhoto();
           return false;
         }
         await new Promise((r) => setTimeout(r, HERO_POLL_MS));
@@ -140,7 +130,7 @@ export function HeroBanner({ item: initialItem, videoError, onHeroItemChange }: 
     async function loadHeroVideo() {
       if (isLibraryHero) {
         const ready = await pollHeroStatus();
-        if (ready || cancelled) return;
+        if (ready || cancelled || videoDisabledRef.current) return;
         if (!heroError) {
           await loadTrailer();
         }
@@ -159,7 +149,7 @@ export function HeroBanner({ item: initialItem, videoError, onHeroItemChange }: 
     return () => {
       cancelled = true;
     };
-  }, [heroItem.id, tmdbId, isLibraryHero, applyStatus]);
+  }, [heroItem.id, tmdbId, isLibraryHero, applyStatus, heroError, revertToPhoto]);
 
   useEffect(() => {
     if (videoRef.current) {
@@ -167,22 +157,31 @@ export function HeroBanner({ item: initialItem, videoError, onHeroItemChange }: 
     }
   }, [muted, localVideoUrl]);
 
-  const handleVideoError = () => {
-    const failedId = heroItem.id;
-    setLocalVideoUrl(null);
-    setShowVideo(false);
-    void requestFallback(failedId, "Browser could not play hero preview").then((data) => {
-      if (data?.videoUrl && data.videoReady) {
-        setLocalVideoUrl(data.videoUrl);
-        setVideoMode("local");
-        setShowVideo(true);
-      } else if (data?.exhausted) {
-        setHeroError(data.error ?? "Marquee video unavailable");
-      } else if (trailerKey) {
-        setVideoMode("youtube");
-        setShowVideo(true);
+  useEffect(() => {
+    if (!showVideo || videoMode !== "local" || !localVideoUrl) return;
+    const video = videoRef.current;
+    if (!video) return;
+
+    let lastTime = video.currentTime;
+    let lastAdvance = Date.now();
+
+    const timer = window.setInterval(() => {
+      if (video.paused || video.ended) return;
+      if (video.currentTime > lastTime + 0.05) {
+        lastTime = video.currentTime;
+        lastAdvance = Date.now();
+        return;
       }
-    });
+      if (Date.now() - lastAdvance >= HERO_STALL_MS) {
+        revertToPhoto();
+      }
+    }, 1000);
+
+    return () => window.clearInterval(timer);
+  }, [showVideo, videoMode, localVideoUrl, revertToPhoto]);
+
+  const handleVideoError = () => {
+    revertToPhoto();
   };
 
   const hasVideo = showVideo && (videoMode === "local" ? Boolean(localVideoUrl) : Boolean(trailerKey));
@@ -195,7 +194,6 @@ export function HeroBanner({ item: initialItem, videoError, onHeroItemChange }: 
             ref={videoRef}
             src={localVideoUrl}
             autoPlay
-            loop
             muted
             playsInline
             className="pointer-events-none absolute left-1/2 top-1/2 h-[56.25vw] min-h-full min-w-full w-[177.78vh] -translate-x-1/2 -translate-y-1/2 object-cover"

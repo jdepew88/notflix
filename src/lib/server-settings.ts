@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import {
   getLibraryPath,
+  getPeerflixUrl,
   getPlexToken,
   getPlexUrl,
   getRealDebridToken,
@@ -18,6 +19,7 @@ export interface ServerSettings {
   plexUrl: string;
   plexToken: string;
   torrentioUrl: string;
+  peerflixUrl: string;
   directPlay: boolean;
   plexOnly: boolean;
 }
@@ -36,6 +38,7 @@ export function settingsFromEnv(): ServerSettings {
     plexUrl: getPlexUrl(),
     plexToken: getPlexToken(),
     torrentioUrl: getTorrentioUrl(),
+    peerflixUrl: getPeerflixUrl(),
     directPlay: process.env.DIRECT_PLAY !== "false",
     plexOnly: process.env.PLEX_ONLY !== "false",
   };
@@ -62,6 +65,7 @@ function mergeLayer(
     plexUrl: overlay.plexUrl || base.plexUrl,
     plexToken: overlay.plexToken || base.plexToken,
     torrentioUrl: overlay.torrentioUrl || base.torrentioUrl,
+    peerflixUrl: overlay.peerflixUrl || base.peerflixUrl,
     directPlay: overlay.directPlay ?? base.directPlay,
     plexOnly: overlay.plexOnly ?? base.plexOnly,
   };

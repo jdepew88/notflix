@@ -1,15 +1,18 @@
 import { fetchPlexLibrary } from "./plex";
 import { findInPlexLibrary } from "./plex-match";
 import { plexDirectStreamUrl } from "./plex-stream";
+import { readLibraryDatabase } from "./library-store";
+import { itemWithMappedPath, libraryStreamUrl } from "./library-playback";
+import { resolvePeerflixBaseUrl } from "./peerflix";
 import {
   buildDefaultTorrentioUrl,
   buildStreamVideoId,
   fetchTorrentioStreams,
-  listPlayableTorrentioStreams,
   normalizeTorrentioBaseUrl,
   resolveTorrentioStreamUrl,
   type TorrentioStreamOption,
 } from "./torrentio";
+import { fetchStremioStreams, mergeStremioStreamLists } from "./stremio-streams";
 import { registerStreamUrlIfLong } from "./stream-sessions";
 import { getMovieDetails, getMovieExternalIds } from "./tmdb";
 import type { MediaItem } from "./types";
@@ -24,13 +27,14 @@ export interface PlayResolveRequest {
   plexUrl?: string;
   plexToken?: string;
   torrentioUrl?: string;
+  peerflixUrl?: string;
   realDebridToken?: string;
   tmdbApiKey?: string;
   plexOnly?: boolean;
 }
 
 export interface PlayResolveResult {
-  source: "plex" | "torrentio" | "none";
+  source: "plex" | "library" | "torrentio" | "none";
   item?: MediaItem;
   watchId?: string;
   streamUrl?: string;
@@ -39,7 +43,7 @@ export interface PlayResolveResult {
 }
 
 export interface ListPlaybackSourcesResult {
-  source: "plex" | "torrentio" | "none";
+  source: "plex" | "library" | "torrentio" | "none";
   item?: MediaItem;
   watchId?: string;
   plexRatingKey?: string;
@@ -108,6 +112,42 @@ function torrentioBaseUrl(request: PlayResolveRequest): string {
   );
 }
 
+function peerflixBaseUrl(request: PlayResolveRequest): string {
+  return resolvePeerflixBaseUrl({
+    peerflixUrl: request.peerflixUrl,
+    realDebridToken: request.realDebridToken,
+  });
+}
+
+function libraryMatchResult(match: MediaItem, message: string): PlayResolveResult {
+  const item = itemWithMappedPath(match);
+  const streamUrl = item.filePath ? libraryStreamUrl(item.filePath) : item.streamUrl;
+
+  return {
+    source: item.filePath ? "library" : "plex",
+    item,
+    watchId: item.id,
+    streamUrl,
+    streamLabel: item.filePath ? "Local library" : "Plex",
+    message,
+  };
+}
+
+function tryLibraryDbMatch(request: PlayResolveRequest): PlayResolveResult | null {
+  const db = readLibraryDatabase();
+  if (!db?.items.length) return null;
+
+  const match = findInPlexLibrary(db.items, {
+    tmdbId: request.tmdbId,
+    title: request.title,
+    year: request.year,
+    type: request.type,
+  });
+  if (!match) return null;
+
+  return libraryMatchResult(match, "Playing from saved library (local file or Plex metadata)");
+}
+
 async function tryPlexMatch(request: PlayResolveRequest): Promise<PlayResolveResult | null> {
   const { tmdbId, title, year, type, plexUrl, plexToken } = request;
   if (!plexUrl || !plexToken) return null;
@@ -117,28 +157,30 @@ async function tryPlexMatch(request: PlayResolveRequest): Promise<PlayResolveRes
     const match = findInPlexLibrary(library, { tmdbId, title, year, type });
     if (!match) return null;
 
+    const item = itemWithMappedPath(match);
     const streamUrl =
-      match.streamUrl ??
-      (match.plexPartKey ? plexDirectStreamUrl(match.plexPartKey, plexUrl) : undefined);
+      item.filePath
+        ? libraryStreamUrl(item.filePath)
+        : match.streamUrl ??
+          (match.plexPartKey ? plexDirectStreamUrl(match.plexPartKey, plexUrl) : undefined);
 
     return {
-      source: "plex",
-      item: match,
+      source: item.filePath ? "library" : "plex",
+      item,
       watchId: match.id,
       streamUrl,
-      streamLabel: "Plex",
-      message: "Playing from your Plex library",
+      streamLabel: item.filePath ? "Local library" : "Plex",
+      message: item.filePath
+        ? "Playing from local library folder"
+        : "Playing from your Plex library",
     };
   } catch (err) {
     console.warn("[play-resolve] Plex library check failed:", err);
-    return null;
+    return tryLibraryDbMatch(request);
   }
 }
 
-async function fetchSortedTorrentioStreams(request: PlayResolveRequest) {
-  const base = torrentioBaseUrl(request);
-  if (!base) return null;
-
+async function fetchSortedTorrentStreams(request: PlayResolveRequest) {
   const imdbId = await resolveImdbId(request);
   const videoId = buildStreamVideoId({
     tmdbId: request.tmdbId,
@@ -148,8 +190,31 @@ async function fetchSortedTorrentioStreams(request: PlayResolveRequest) {
     episode: request.episode,
   });
 
-  const streams = await fetchTorrentioStreams(base, request.type, videoId);
-  return listPlayableTorrentioStreams(streams);
+  const lists: Array<{ streams: Awaited<ReturnType<typeof fetchTorrentioStreams>>; source: string }> =
+    [];
+
+  const torrentio = torrentioBaseUrl(request);
+  if (torrentio) {
+    try {
+      const streams = await fetchTorrentioStreams(torrentio, request.type, videoId);
+      lists.push({ streams, source: "Torrentio" });
+    } catch (err) {
+      console.warn("[play-resolve] Torrentio fetch failed:", err);
+    }
+  }
+
+  const peerflix = peerflixBaseUrl(request);
+  if (peerflix && peerflix !== torrentio) {
+    try {
+      const streams = await fetchStremioStreams(peerflix, request.type, videoId);
+      lists.push({ streams, source: "Peerflix" });
+    } catch (err) {
+      console.warn("[play-resolve] Peerflix fetch failed:", err);
+    }
+  }
+
+  if (lists.length === 0) return null;
+  return mergeStremioStreamLists(lists);
 }
 
 export async function listPlaybackSources(
@@ -158,11 +223,22 @@ export async function listPlaybackSources(
   const plex = await tryPlexMatch(request);
   if (plex?.item) {
     return {
-      source: "plex",
+      source: plex.source === "library" ? "library" : "plex",
       item: plex.item,
       watchId: plex.watchId,
       plexRatingKey: plex.item.plexRatingKey ?? plex.watchId?.replace("plex-", ""),
       message: plex.message,
+    };
+  }
+
+  const cached = tryLibraryDbMatch(request);
+  if (cached?.item) {
+    return {
+      source: cached.source === "library" ? "library" : "plex",
+      item: cached.item,
+      watchId: cached.watchId,
+      plexRatingKey: cached.item.plexRatingKey ?? cached.watchId?.replace("plex-", ""),
+      message: cached.message,
     };
   }
 
@@ -173,22 +249,23 @@ export async function listPlaybackSources(
     };
   }
 
-  if (!torrentioBaseUrl(request)) {
+  if (!torrentioBaseUrl(request) && !peerflixBaseUrl(request)) {
     return {
       source: "none",
-      message: "Not in Plex library. Configure Real-Debrid or TORRENTIO_URL for torrent fallback.",
+      message:
+        "Not in Plex library. Configure Real-Debrid, Torrentio, or Peerflix for torrent fallback.",
     };
   }
 
   const item = await buildMediaItem(request);
 
   try {
-    const listed = await fetchSortedTorrentioStreams(request);
+    const listed = await fetchSortedTorrentStreams(request);
     if (!listed || listed.options.length === 0) {
       return {
         source: "none",
         item,
-        message: "Not in Plex and no cached torrents found on Real-Debrid.",
+        message: "Not in Plex and no English torrents found.",
       };
     }
 
@@ -197,7 +274,7 @@ export async function listPlaybackSources(
       item,
       watchId: item?.id,
       streams: listed.options,
-      message: "Choose a stream source",
+      message: "Choose a stream source (English only)",
     };
   } catch (err) {
     const message = err instanceof Error ? err.message : "Torrent search failed";
@@ -209,7 +286,7 @@ export async function openTorrentioStreamByIndex(
   request: PlayResolveRequest,
   streamIndex: number
 ): Promise<OpenTorrentioStreamResult> {
-  const listed = await fetchSortedTorrentioStreams(request);
+  const listed = await fetchSortedTorrentStreams(request);
   if (!listed || listed.playable.length === 0) {
     throw new Error("No torrent streams available");
   }
@@ -231,7 +308,7 @@ export async function openTorrentioStreamByIndex(
     item,
     streamUrl: proxyPath,
     streamSession: session,
-    streamLabel: option?.label || stream.title || stream.name || "Real-Debrid",
+    streamLabel: option?.label || stream.title || stream.name || "Torrent",
   };
 }
 
@@ -241,6 +318,9 @@ export async function resolvePlayback(
   const plex = await tryPlexMatch(request);
   if (plex) return plex;
 
+  const cached = tryLibraryDbMatch(request);
+  if (cached) return cached;
+
   if (request.plexOnly) {
     return {
       source: "none",
@@ -248,10 +328,11 @@ export async function resolvePlayback(
     };
   }
 
-  if (!torrentioBaseUrl(request)) {
+  if (!torrentioBaseUrl(request) && !peerflixBaseUrl(request)) {
     return {
       source: "none",
-      message: "Not in Plex library. Configure Real-Debrid or TORRENTIO_URL for torrent fallback.",
+      message:
+        "Not in Plex library. Configure Real-Debrid, Torrentio, or Peerflix for torrent fallback.",
     };
   }
 
@@ -265,7 +346,7 @@ export async function resolvePlayback(
       watchId: item?.id,
       streamUrl: opened.streamUrl,
       streamLabel: opened.streamLabel,
-      message: "Streaming via Torrentio + Real-Debrid",
+      message: "Streaming via torrent addon + Real-Debrid",
     };
   } catch (err) {
     const message = err instanceof Error ? err.message : "Torrent search failed";

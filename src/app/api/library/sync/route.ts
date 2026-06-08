@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { mergeSettings } from "@/lib/settings";
+import { mergeSettingsForServerOps } from "@/lib/settings";
 import {
   isLibrarySyncRunning,
   startBackgroundLibrarySync,
@@ -20,7 +20,7 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest) {
-  const settings = mergeSettings(request);
+  const settings = mergeSettingsForServerOps(request);
   const force = request.nextUrl.searchParams.get("force") === "1";
 
   if (!settings.plexUrl?.trim() && !settings.libraryPath?.trim()) {
@@ -41,16 +41,25 @@ export async function POST(request: NextRequest) {
   }
 
   if (force) {
-    const cache = await buildLibraryCatalog(settings, { forceRefresh: true });
-    const state = readLibrarySyncState();
-    return NextResponse.json({
-      started: true,
-      running: false,
-      done: true,
-      titleCount: cache.items.length,
-      ...state,
-      percent: 100,
-    });
+    try {
+      const cache = await buildLibraryCatalog(settings, { forceRefresh: true });
+      const state = readLibrarySyncState();
+      return NextResponse.json({
+        started: true,
+        running: false,
+        done: true,
+        titleCount: cache.items.length,
+        ...state,
+        percent: 100,
+      });
+    } catch (err) {
+      const state = readLibrarySyncState();
+      const message = err instanceof Error ? err.message : "Library sync failed";
+      return NextResponse.json(
+        { started: true, running: false, error: message, ...state },
+        { status: 500 }
+      );
+    }
   }
 
   void startBackgroundLibrarySync(settings, { forceRefresh: true });

@@ -208,6 +208,12 @@ export function BrowseContent() {
         setStreamingFilter("all");
         setMoreRowIndex(0);
         setMoreRowsExhausted(false);
+      } catch (err) {
+        if (generation !== loadGenerationRef.current) return;
+        setLoadFailed(true);
+        setLibraryStatus(
+          err instanceof Error ? err.message : "Failed to load library. Check Settings and try Save & Sync."
+        );
       } finally {
         if (generation === loadGenerationRef.current) {
           setLoading(false);

@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import path from "path";
 import { startHlsTranscode, probeMediaUrl, probeMediaFile, type StreamTrack } from "@/lib/ffmpeg";
-import { getLibraryPath } from "@/lib/env";
+import { resolveAccessibleLibraryFile, resolveLibraryRoot } from "@/lib/library-playback";
+import { mergeSettingsForServerOps } from "@/lib/settings";
 import { resolveStreamInput } from "@/lib/stream-source";
 
 export async function GET(request: NextRequest) {
+  const settings = mergeSettingsForServerOps(request);
+  const libraryRoot = resolveLibraryRoot(settings);
   const resolved = resolveStreamInput(request);
   const audio = request.nextUrl.searchParams.get("audio");
   const subtitle = request.nextUrl.searchParams.get("subtitle");
@@ -28,13 +30,11 @@ export async function GET(request: NextRequest) {
     let subtitlesForOrdinal: StreamTrack[] = [];
 
     if (resolved.path) {
-      const libraryPath = getLibraryPath();
-      if (!libraryPath) {
-        return NextResponse.json({ error: "LIBRARY_PATH not configured" }, { status: 400 });
+      if (!libraryRoot) {
+        return NextResponse.json({ error: "Library path not configured" }, { status: 400 });
       }
-      const filePath = path.resolve(resolved.path);
-      const root = path.resolve(libraryPath);
-      if (!filePath.startsWith(root)) {
+      const filePath = resolveAccessibleLibraryFile(resolved.path, libraryRoot);
+      if (!filePath) {
         return NextResponse.json({ error: "Access denied" }, { status: 403 });
       }
       input = filePath;

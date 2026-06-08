@@ -39,6 +39,10 @@ export function getTorrentioUrl(): string {
   return process.env.TORRENTIO_URL?.trim() || "";
 }
 
+export function getPeerflixUrl(): string {
+  return process.env.PEERFLIX_URL?.trim() || "";
+}
+
 export function logStartupConfig(): void {
   const port = getPort();
   const plexUrl = getPlexUrl() || "(not set)";
@@ -46,6 +50,7 @@ export function logStartupConfig(): void {
   const tokenStatus = getPlexToken() ? "[configured]" : "(not set)";
   const debridStatus = getRealDebridToken() ? "[configured]" : "(not set)";
   const torrentioStatus = getTorrentioUrl() ? "[configured]" : "(not set)";
+  const peerflixStatus = getPeerflixUrl() ? "[configured]" : "(default addon)";
 
   console.log("[notflix] Server configuration");
   console.log(`[notflix]   PORT=${port}`);
@@ -54,4 +59,5 @@ export function logStartupConfig(): void {
   console.log(`[notflix]   PLEX_TOKEN=${tokenStatus}`);
   console.log(`[notflix]   REAL_DEBRID_TOKEN=${debridStatus}`);
   console.log(`[notflix]   TORRENTIO_URL=${torrentioStatus}`);
+  console.log(`[notflix]   PEERFLIX_URL=${peerflixStatus}`);
 }

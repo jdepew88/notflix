@@ -72,20 +72,46 @@ async function buildLibraryCatalogInner(
 
   if (settings.plexUrl && settings.plexToken) {
     reportProgress({ phase: "fetching", message: "Connecting to Plex…", current: 0, total: 1 });
-    items = await fetchPlexLibrary(
-      settings.plexUrl,
-      settings.plexToken,
-      (progress: PlexFetchProgress) => {
+    let plexError: string | undefined;
+    try {
+      items = await fetchPlexLibrary(
+        settings.plexUrl,
+        settings.plexToken,
+        (progress: PlexFetchProgress) => {
+          reportProgress({
+            phase: "fetching",
+            message: progress.message,
+            current: progress.sectionIndex,
+            total: Math.max(progress.sectionCount, 1),
+            itemsLoaded: progress.itemsLoaded,
+          });
+        }
+      );
+      source = "plex";
+    } catch (err) {
+      plexError = err instanceof Error ? err.message : "Plex fetch failed";
+      console.warn("[library-sync] Plex unavailable:", plexError);
+      reportProgress({
+        phase: "fetching",
+        message: `Plex unavailable (${plexError}). Scanning local folders…`,
+        current: 0,
+        total: 1,
+      });
+    }
+
+    if (items.length === 0) {
+      const libraryPath = resolveLibraryPath(settings.libraryPath);
+      if (libraryPath) {
+        items = await scanLibrary(libraryPath);
+        source = "nfs";
         reportProgress({
-          phase: "fetching",
-          message: progress.message,
-          current: progress.sectionIndex,
-          total: Math.max(progress.sectionCount, 1),
-          itemsLoaded: progress.itemsLoaded,
+          itemsLoaded: items.length,
+          message: `Found ${items.length} files on disk`,
         });
+      } else if (plexError) {
+        throw new Error(plexError);
       }
-    );
-    source = "plex";
+    }
   } else {
     const libraryPath = resolveLibraryPath(settings.libraryPath);
     if (libraryPath) {
@@ -230,6 +256,7 @@ export async function startBackgroundLibrarySync(
   options: BuildOptions = {}
 ): Promise<void> {
   if (isLibrarySyncRunning()) return;
+  resetLibrarySyncState();
   try {
     await buildLibraryCatalog(settings, options);
   } catch (err) {

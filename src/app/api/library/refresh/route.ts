@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { mergeSettings } from "@/lib/settings";
+import { mergeSettingsForServerOps } from "@/lib/settings";
 import { refreshPlexLibraries } from "@/lib/plex";
 import { resolveLibraryPath } from "@/lib/library-path";
 import {
@@ -11,7 +11,7 @@ import { readLibrarySyncState, syncProgressPercent } from "@/lib/library-sync-st
 import { readLibraryDatabase } from "@/lib/library-store";
 
 export async function POST(request: NextRequest) {
-  const settings = mergeSettings(request);
+  const settings = mergeSettingsForServerOps(request);
 
   try {
     if (settings.plexUrl && settings.plexToken) {

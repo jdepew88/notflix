@@ -1,4 +1,5 @@
 import { fetchWithSettings, getClientSettings } from "./client-settings";
+import { libraryStreamUrl } from "./library-playback";
 import type { MediaItem } from "./types";
 
 let libraryCache: MediaItem[] | null = null;
@@ -87,7 +88,7 @@ export async function resolveMedia(id: string): Promise<MediaItem | null> {
 
 export function getStreamUrl(item: MediaItem, debridStreamUrl?: string): string | null {
   if (item.source === "library" && item.filePath) {
-    return `/api/library/stream?path=${encodeURIComponent(item.filePath)}`;
+    return libraryStreamUrl(item.filePath);
   }
   if (item.source === "debrid" && debridStreamUrl) {
     return debridStreamUrl;

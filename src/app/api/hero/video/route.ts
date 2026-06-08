@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createReadStream, statSync } from "fs";
-import { mergeSettings } from "@/lib/settings";
+import { mergeSettingsForServerOps } from "@/lib/settings";
 import {
   getHeroVideoFile,
   isHeroVideoGenerating,
@@ -72,7 +72,7 @@ export async function GET(request: NextRequest) {
 
   const file = getHeroVideoFile(id);
   if (!file || !isValidVideoFile(id)) {
-    const settings = mergeSettings(request);
+    const settings = mergeSettingsForServerOps(request);
     if (!isHeroVideoGenerating(id)) {
       void resolveHeroVideoWithSync(settings);
     }
@@ -99,7 +99,7 @@ export async function POST(request: NextRequest) {
     });
   }
 
-  const settings = mergeSettings(request);
+  const settings = mergeSettingsForServerOps(request);
   const cache = readLibraryCache();
   if (!cache) {
     return NextResponse.json({ error: "Library cache not found" }, { status: 404 });

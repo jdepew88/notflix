@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { mergeSettings } from "@/lib/settings";
+import { mergeSettingsForServerOps } from "@/lib/settings";
 import { readLibraryCache } from "@/lib/library-cache";
 import { getHeroStatus, isHeroVideoReady, isHeroVideoGenerating } from "@/lib/hero-cache";
 import { resolveHeroVideoWithSync } from "@/lib/hero-resolve";
 
 export async function GET(request: NextRequest) {
-  const settings = mergeSettings(request);
+  const settings = mergeSettingsForServerOps(request);
   const cache = readLibraryCache();
   if (!cache) {
     return NextResponse.json({ error: "Library cache not found" }, { status: 404 });

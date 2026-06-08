@@ -1,5 +1,5 @@
 import type { NextRequest } from "next/server";
-import { mergeSettings } from "./settings";
+import { mergeSettingsForServerOps } from "./settings";
 import { getPlexToken, getPlexUrl } from "./env";
 
 export const PLEX_CLIENT_ID = "netflix-clone-8f3a2b1c-4d5e-6f7a-8b9c-0d1e2f3a4b5c";
@@ -12,7 +12,7 @@ export function normalizePlexUrl(url: string): string {
 
 export function getPlexCredentials(request?: NextRequest) {
   const merged = request
-    ? mergeSettings(request)
+    ? mergeSettingsForServerOps(request)
     : {
         plexUrl: getPlexUrl(),
         plexToken: getPlexToken(),

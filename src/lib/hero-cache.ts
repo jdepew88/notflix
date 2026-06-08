@@ -6,6 +6,7 @@ import type { MediaItem } from "./types";
 import type { ServerSettings } from "./server-settings";
 import { getDataPath } from "./data-path";
 import { getFfmpegPath, isFfmpegAvailable } from "./ffmpeg";
+import { mapHostPathToContainer } from "./library-path";
 
 export interface HeroManifest {
   primaryFeaturedId: string;
@@ -150,11 +151,15 @@ function sourceFingerprint(item: MediaItem): string {
 }
 
 function resolvePreviewInput(item: MediaItem, settings: ServerSettings): string | null {
+  if (item.filePath) {
+    const mapped = mapHostPathToContainer(item.filePath);
+    if (fs.existsSync(mapped)) return mapped;
+  }
   if (item.plexPartKey && settings.plexUrl && settings.plexToken) {
     const base = settings.plexUrl.replace(/\/$/, "");
     return `${base}${item.plexPartKey}?X-Plex-Token=${settings.plexToken}`;
   }
-  if (item.filePath) return item.filePath;
+  if (item.filePath) return mapHostPathToContainer(item.filePath);
   return null;
 }
 

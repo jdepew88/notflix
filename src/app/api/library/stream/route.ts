@@ -1,13 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createReadStream, statSync } from "fs";
 import path from "path";
-import { mergeSettings } from "@/lib/settings";
+import { mergeSettingsForServerOps } from "@/lib/settings";
 import { resolveLibraryPath } from "@/lib/library-path";
+import { mappedLibraryFilePath } from "@/lib/library-playback";
 import { getMimeType } from "@/lib/library";
 
 export async function GET(request: NextRequest) {
   const filePath = request.nextUrl.searchParams.get("path");
-  const settings = mergeSettings(request);
+  const settings = mergeSettingsForServerOps(request);
   const libraryPath = resolveLibraryPath(settings.libraryPath);
 
   if (!filePath || !libraryPath) {
@@ -17,7 +18,7 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  const resolved = path.resolve(filePath);
+  const resolved = path.resolve(mappedLibraryFilePath(filePath));
   const root = path.resolve(libraryPath);
 
   if (!resolved.startsWith(root)) {

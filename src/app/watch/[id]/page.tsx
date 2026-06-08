@@ -15,6 +15,7 @@ import {
 import type { MediaItem } from "@/lib/types";
 import type { StreamTrack } from "@/types/media-tracks";
 import type { TorrentioStreamOption } from "@/lib/torrentio";
+import { libraryStreamUrl, mappedLibraryFilePath } from "@/lib/library-playback";
 import { readJsonResponse } from "@/lib/fetch-json";
 
 function buildPlayQuery(opts: {
@@ -416,42 +417,66 @@ export default function WatchPage() {
         return;
       }
 
-      async function startPlexPlayback(ratingKey: string) {
+      async function startLibraryFilePlayback(media: MediaItem) {
+        if (!media.filePath) {
+          throw new Error("No local file path for this title");
+        }
+        const mapped = mappedLibraryFilePath(media.filePath);
+        await applyTrackedPlayback({
+          path: mapped,
+          proxiedUrl: libraryStreamUrl(media.filePath),
+          useDirectPlay,
+        });
+      }
+
+      async function startPlexPlayback(ratingKey: string, fallbackItem?: MediaItem) {
         if (!settings.plexUrl || !settings.plexToken) {
+          if (fallbackItem?.filePath) {
+            await startLibraryFilePlayback(fallbackItem);
+            return;
+          }
           setError("Plex not configured. Go to Settings → enter URL + token → Save & Sync Library.");
           return;
         }
         setPlexRatingKey(ratingKey);
-        await ensurePlexCookies(settings);
-        const playUrl = `/api/plex/play?ratingKey=${encodeURIComponent(ratingKey)}&mode=${plexMode}&plexUrl=${encodeURIComponent(settings.plexUrl)}`;
-        const playRes = await fetchWithSettings(playUrl, settings);
-        const playData = await playRes.json();
-        if (!playRes.ok) {
-          throw new Error(playData.hint || playData.error || "Failed to start playback");
-        }
+        try {
+          await ensurePlexCookies(settings);
+          const playUrl = `/api/plex/play?ratingKey=${encodeURIComponent(ratingKey)}&mode=${plexMode}&plexUrl=${encodeURIComponent(settings.plexUrl)}`;
+          const playRes = await fetchWithSettings(playUrl, settings);
+          const playData = await playRes.json();
+          if (!playRes.ok) {
+            throw new Error(playData.hint || playData.error || "Failed to start playback");
+          }
 
-        const baseUrl = settings.plexUrl.replace(/\/$/, "");
-        if (playData.partKey) {
-          const upstream = `${baseUrl}${playData.partKey}?X-Plex-Token=${settings.plexToken}`;
-          if (playData.mode === "direct") {
+          const baseUrl = settings.plexUrl.replace(/\/$/, "");
+          if (playData.partKey) {
+            const upstream = `${baseUrl}${playData.partKey}?X-Plex-Token=${settings.plexToken}`;
+            if (playData.mode === "direct") {
+              await applyTrackedPlayback({
+                url: upstream,
+                proxiedUrl: playData.streamUrl,
+                useDirectPlay,
+              });
+              return;
+            }
+
             await applyTrackedPlayback({
               url: upstream,
               proxiedUrl: playData.streamUrl,
-              useDirectPlay,
+              externalStreamUrl: playData.streamUrl,
+              useDirectPlay: false,
             });
             return;
           }
 
-          await applyTrackedPlayback({
-            url: upstream,
-            proxiedUrl: playData.streamUrl,
-            externalStreamUrl: playData.streamUrl,
-            useDirectPlay: false,
-          });
-          return;
+          setStreamUrl(playData.streamUrl);
+        } catch (err) {
+          if (fallbackItem?.filePath) {
+            await startLibraryFilePlayback(fallbackItem);
+            return;
+          }
+          throw err;
         }
-
-        setStreamUrl(playData.streamUrl);
       }
 
       if (id.startsWith("tmdb-")) {
@@ -480,15 +505,25 @@ export default function WatchPage() {
             );
           }
 
-          if (sources.source === "plex" && sources.item) {
-            setResolveStatus("Playing from Plex…");
+          if ((sources.source === "plex" || sources.source === "library") && sources.item) {
+            setResolveStatus(
+              sources.source === "library" ? "Playing from library folder…" : "Playing from Plex…"
+            );
             setItem(sources.item);
+            if (sources.source === "library" && sources.item.filePath) {
+              await startLibraryFilePlayback(sources.item);
+              return;
+            }
             const rk =
               sources.item.plexRatingKey ??
               sources.plexRatingKey ??
               sources.watchId?.replace("plex-", "");
             if (rk) {
-              await startPlexPlayback(rk);
+              await startPlexPlayback(rk, sources.item);
+              return;
+            }
+            if (sources.item.filePath) {
+              await startLibraryFilePlayback(sources.item);
               return;
             }
           }
@@ -512,10 +547,11 @@ export default function WatchPage() {
 
       if (id.startsWith("plex-")) {
         const ratingKey = id.replace("plex-", "");
+        let found: MediaItem | undefined;
         try {
           const libraryRes = await fetchWithSettings("/api/library", settings);
           const libData = libraryRes.ok ? await libraryRes.json() : { items: [] };
-          const found = (libData.items ?? []).find((i: MediaItem) => i.id === id);
+          found = (libData.items ?? []).find((i: MediaItem) => i.id === id);
           setItem(
             found ?? {
               id,
@@ -524,9 +560,18 @@ export default function WatchPage() {
               source: "library",
             }
           );
-          await startPlexPlayback(ratingKey);
+          await startPlexPlayback(ratingKey, found);
           return;
         } catch (err) {
+          if (found?.filePath) {
+            try {
+              setItem(found);
+              await startLibraryFilePlayback(found);
+              return;
+            } catch {
+              /* fall through */
+            }
+          }
           setError(err instanceof Error ? err.message : "Plex playback failed");
           return;
         }
@@ -541,9 +586,17 @@ export default function WatchPage() {
           if (found.plexRatingKey || found.id.startsWith("plex-")) {
             const rk = found.plexRatingKey ?? found.id.replace("plex-", "");
             try {
-              await startPlexPlayback(rk);
+              await startPlexPlayback(rk, found);
               return;
             } catch (err) {
+              if (found.filePath) {
+                try {
+                  await startLibraryFilePlayback(found);
+                  return;
+                } catch {
+                  /* fall through */
+                }
+              }
               setError(err instanceof Error ? err.message : "Plex playback failed");
               return;
             }
@@ -568,11 +621,7 @@ export default function WatchPage() {
             return;
           }
           if (found.filePath) {
-            await applyTrackedPlayback({
-              path: found.filePath,
-              proxiedUrl: `/api/library/stream?path=${encodeURIComponent(found.filePath)}`,
-              useDirectPlay,
-            });
+            await startLibraryFilePlayback(found);
             return;
           }
         }

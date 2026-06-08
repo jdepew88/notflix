@@ -75,6 +75,8 @@ export function parseGuidIds(guid?: string): { tvdbId?: number; tmdbId?: number 
   };
 }
 
+import { mapHostPathToContainer } from "./library-path";
+
 export function plexArtUrl(plexUrl: string, path: string): string {
   return `/api/plex/art?path=${encodeURIComponent(path)}&plexUrl=${encodeURIComponent(normalizePlexUrl(plexUrl))}`;
 }
@@ -118,7 +120,7 @@ function metadataToItem(
           : "movie"
         : undefined,
     source: "library",
-    filePath,
+    filePath: filePath ? mapHostPathToContainer(filePath) : undefined,
     plexPartKey: partKey,
     streamUrl: partKey
       ? plexDirectStreamUrl(partKey, plexUrl)

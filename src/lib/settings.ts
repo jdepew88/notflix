@@ -22,6 +22,41 @@ export function mergeSettings(request: NextRequest): ServerSettings {
   return mergeAllSettings(base, fromCookies, fromHeaders);
 }
 
+/** Server-side ops: env/file win over browser headers for paths and Plex URL. */
+export function mergeSettingsForServerOps(request: NextRequest): ServerSettings {
+  const base = getServerSettingsSync();
+  const empty: ServerSettings = {
+    realDebridToken: "",
+    tmdbApiKey: "",
+    tvdbApiKey: "",
+    libraryPath: "",
+    plexUrl: "",
+    plexToken: "",
+    torrentioUrl: "",
+    peerflixUrl: "",
+    directPlay: true,
+    plexOnly: true,
+  };
+  const client = mergeAllSettings(
+    empty,
+    settingsFromCookies(request.headers.get("cookie")),
+    settingsFromHeaders(request)
+  );
+
+  return {
+    realDebridToken: base.realDebridToken || client.realDebridToken,
+    tmdbApiKey: base.tmdbApiKey || client.tmdbApiKey,
+    tvdbApiKey: base.tvdbApiKey || client.tvdbApiKey,
+    libraryPath: base.libraryPath || client.libraryPath,
+    plexUrl: base.plexUrl || client.plexUrl,
+    plexToken: base.plexToken || client.plexToken,
+    torrentioUrl: base.torrentioUrl || client.torrentioUrl,
+    peerflixUrl: base.peerflixUrl || client.peerflixUrl,
+    directPlay: client.directPlay ?? base.directPlay,
+    plexOnly: client.plexOnly ?? base.plexOnly,
+  };
+}
+
 export function mergeSettingsFromBody(
   request: NextRequest,
   body: Partial<ServerSettings>

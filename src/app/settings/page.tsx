@@ -43,6 +43,33 @@ export default function SettingsPage() {
     setForm(settings);
   }, [settings]);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    async function refreshSyncStatus() {
+      const res = await fetch("/api/library/sync").catch(() => null);
+      if (cancelled || !res?.ok) return;
+      const data = (await res.json()) as LibrarySyncStatus;
+      if (
+        data.running ||
+        data.status === "running" ||
+        data.status === "error" ||
+        (data.percent !== undefined && data.percent > 0 && data.percent < 100)
+      ) {
+        setSyncProgress(data);
+      } else if (data.status === "done" && data.message) {
+        setSyncProgress(data);
+      }
+    }
+
+    void refreshSyncStatus();
+    const id = window.setInterval(refreshSyncStatus, 2000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, []);
+
   const [syncProgress, setSyncProgress] = useState<LibrarySyncStatus | null>(null);
 
   async function pollLibrarySyncUntilDone(): Promise<LibrarySyncStatus | null> {
@@ -109,7 +136,6 @@ export default function SettingsPage() {
       setSyncResult(err instanceof Error ? err.message : "Failed to sync settings.");
     } finally {
       setSyncing(false);
-      setSyncProgress(null);
     }
   };
 
@@ -573,9 +599,9 @@ export default function SettingsPage() {
 
         {!form.plexOnly && (
         <section className="rounded bg-netflix-dark p-6">
-          <h2 className="mb-4 text-xl font-semibold">Real-Debrid + Torrentio</h2>
+          <h2 className="mb-4 text-xl font-semibold">Real-Debrid, Torrentio & Peerflix</h2>
           <p className="mb-4 text-sm text-netflix-light-gray">
-            When a title is not in Plex, Notflix searches torrent indexers via{" "}
+            When a title is not in Plex, Notflix searches English torrents via{" "}
             <a
               href="https://torrentio.strem.fun/configure"
               target="_blank"
@@ -584,8 +610,17 @@ export default function SettingsPage() {
             >
               Torrentio
             </a>{" "}
-            and plays cached streams from your Real-Debrid account. Configure Torrentio on their site,
-            or just enter your Real-Debrid token here (uses default Torrentio settings).
+            and{" "}
+            <a
+              href="https://config.peerflix.mov"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-white underline"
+            >
+              Peerflix
+            </a>
+            , then plays cached streams from Real-Debrid when configured. Non-English releases are
+            filtered out automatically.
           </p>
           <input
             type="password"
@@ -633,7 +668,14 @@ export default function SettingsPage() {
         </section>
         )}
 
-        <LibrarySyncBar sync={syncProgress} className="rounded bg-netflix-dark" />
+        <section className="rounded bg-netflix-dark p-6">
+          <h2 className="mb-4 text-xl font-semibold">Library sync</h2>
+          <p className="mb-4 text-sm text-netflix-light-gray">
+            Plex library sync runs in the background. If Plex is unreachable, Notflix falls back to
+            scanning your mounted video folder. Progress appears below while syncing.
+          </p>
+          <LibrarySyncBar sync={syncProgress} className="rounded border border-white/10" />
+        </section>
 
         <button
           type="button"

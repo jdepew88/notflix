@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getRealDebridToken, getTmdbApiKey, getTorrentioUrl } from "@/lib/env";
+import { getPeerflixUrl, getRealDebridToken, getTmdbApiKey, getTorrentioUrl } from "@/lib/env";
 import { resolvePlayback, parsePlayResolveParams } from "@/lib/play-resolve";
-import { mergeSettings } from "@/lib/settings";
+import { mergeSettingsForServerOps } from "@/lib/settings";
 
 export async function GET(request: NextRequest) {
-  const settings = mergeSettings(request);
+  const settings = mergeSettingsForServerOps(request);
   const params = request.nextUrl.searchParams;
   const parsed = parsePlayResolveParams(params);
 
@@ -21,6 +21,7 @@ export async function GET(request: NextRequest) {
     plexUrl: settings.plexUrl,
     plexToken: settings.plexToken,
     torrentioUrl: settings.torrentioUrl || getTorrentioUrl() || undefined,
+    peerflixUrl: settings.peerflixUrl || getPeerflixUrl() || undefined,
     realDebridToken: settings.realDebridToken || getRealDebridToken() || undefined,
     tmdbApiKey: settings.tmdbApiKey || getTmdbApiKey() || undefined,
     plexOnly: settings.plexOnly ?? true,

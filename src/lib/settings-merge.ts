@@ -73,6 +73,7 @@ export function mergeAllSettings(
       plexUrl: coalesce(layer.plexUrl, merged.plexUrl),
       plexToken: coalesce(layer.plexToken, merged.plexToken),
       torrentioUrl: coalesce(layer.torrentioUrl, merged.torrentioUrl),
+      peerflixUrl: coalesce(layer.peerflixUrl, merged.peerflixUrl),
       directPlay: layer.directPlay ?? merged.directPlay,
       plexOnly: layer.plexOnly ?? merged.plexOnly,
     };

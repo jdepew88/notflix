@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { mergeSettings } from "@/lib/settings";
+import { mergeSettings, mergeSettingsForServerOps } from "@/lib/settings";
 import { filterByGenre } from "@/lib/plex";
 import { resolveLibraryPath } from "@/lib/library-path";
 import {
@@ -28,7 +28,7 @@ function libraryConfigured(settings: ReturnType<typeof mergeSettings>): boolean 
 }
 
 export async function GET(request: NextRequest) {
-  const settings = mergeSettings(request);
+  const settings = mergeSettingsForServerOps(request);
   const genreFilter = request.nextUrl.searchParams.get("genre");
   const forceRefresh = request.nextUrl.searchParams.get("refresh") === "1";
 
@@ -37,6 +37,9 @@ export async function GET(request: NextRequest) {
   const libraryPath = resolveLibraryPath(settings.libraryPath);
   const syncState = readLibrarySyncState();
   const syncing = isLibrarySyncRunning() || syncState.status === "running";
+  const liveSync = syncing
+    ? { ...readLibrarySyncState(), percent: syncProgressPercent(readLibrarySyncState()) }
+    : syncState;
 
   try {
     if (hasPlexUrl && !hasPlexToken) {
@@ -91,10 +94,7 @@ export async function GET(request: NextRequest) {
         source: "none",
         count: 0,
         syncing: true,
-        sync: {
-          ...syncState,
-          percent: syncProgressPercent(syncState),
-        },
+        sync: liveSync,
         message: "Library sync in progress…",
       });
     } else if (forceRefresh && !syncing) {
@@ -147,9 +147,7 @@ export async function GET(request: NextRequest) {
       syncing,
       stale,
       persisted: true,
-      sync: syncing
-        ? { ...syncState, percent: syncProgressPercent(syncState) }
-        : undefined,
+      sync: syncing ? liveSync : undefined,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to load library";
