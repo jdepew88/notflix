@@ -59,6 +59,11 @@ export default function WatchPage() {
   const [streamQuality, setStreamQuality] = useState<string | null>(null);
   const [isDebridPlayback, setIsDebridPlayback] = useState(false);
   const [streamSession, setStreamSession] = useState<string | null>(null);
+  const [streamProbe, setStreamProbe] = useState<{
+    format?: string;
+    videoCodec?: string;
+    needsTranscode?: boolean;
+  }>({});
   const updateProgress = useAppStore((s) => s.updateProgress);
   const progress = getMediaProgress(id);
   const storeSettings = useAppStore((s) => s.settings);
@@ -180,6 +185,8 @@ export default function WatchPage() {
         audio?: StreamTrack[];
         subtitles?: StreamTrack[];
         needsTranscode?: boolean;
+        format?: string;
+        videoCodec?: string;
       }>(tracksRes);
 
       if (!tracksRes.ok) {
@@ -216,6 +223,11 @@ export default function WatchPage() {
 
       setAudioTracks(tracksData.audio ?? []);
       setSubtitleTracks(tracksData.subtitles ?? []);
+      setStreamProbe({
+        format: tracksData.format,
+        videoCodec: tracksData.videoCodec,
+        needsTranscode: tracksData.needsTranscode,
+      });
       setAudioIndex(audio);
       setSubtitleIndex(subtitle);
       setSourceUrl(opts.url ?? null);
@@ -722,9 +734,6 @@ export default function WatchPage() {
       streamUrl.includes("/api/plex/stream"));
   const transcodeAvailable =
     !isDebridPlayback && (!!sourceUrl || !!sourcePath || !!streamSession || !!plexRatingKey);
-  const hasTrackControls =
-    audioTracks.length > 0 || subtitleTracks.length > 0;
-
   const handleProgress = useCallback(
     (_seconds: number, percent: number) => {
       updateProgress(id, percent);
@@ -816,8 +825,8 @@ export default function WatchPage() {
         subtitleTracks={subtitleTracks}
         audioIndex={audioIndex}
         subtitleIndex={subtitleIndex}
-        onSubtitleChange={hasTrackControls ? handleSubtitleChange : undefined}
-        onAudioChange={hasTrackControls ? handleAudioChange : undefined}
+        onSubtitleChange={handleSubtitleChange}
+        onAudioChange={audioTracks.length > 0 ? handleAudioChange : undefined}
         onRequestTranscode={handleRequestTranscode}
         transcodeAvailable={transcodeAvailable}
         isDirectPlay={isDirectPlay}
@@ -825,6 +834,14 @@ export default function WatchPage() {
         plexRatingKey={plexRatingKey ?? undefined}
         plexUrl={settings.plexUrl}
         qualityHint={streamQuality}
+        streamInfo={{
+          streamUrl,
+          sourceUrl,
+          sourcePath,
+          isDirectPlay,
+          qualityHint: streamQuality,
+          ...streamProbe,
+        }}
       />
     </div>
   );

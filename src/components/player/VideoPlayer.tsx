@@ -13,6 +13,8 @@ import {
   SkipForward,
   Cast,
   Airplay,
+  Subtitles,
+  Gauge,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { useCast } from "@/hooks/useCast";
@@ -24,14 +26,18 @@ import {
 import {
   applyHlsBufferTier,
   buildHlsConfig,
+  getBufferedAhead,
   getMinPlayBufferSeconds,
   playWhenBuffered,
   qualityTierFromHeight,
   qualityTierFromHint,
   type BufferTier,
 } from "@/lib/playback-buffer";
+import { subtitleFileToObjectUrl } from "@/lib/external-subtitles";
 import { TrackSelector } from "./TrackSelector";
+import { StreamInfoModal } from "./StreamInfoModal";
 import type { StreamTrack } from "@/types/media-tracks";
+import type { StreamPlaybackInfo } from "@/types/stream-info";
 
 interface VideoPlayerProps {
   src: string;
@@ -53,6 +59,7 @@ interface VideoPlayerProps {
   plexRatingKey?: string;
   plexUrl?: string;
   qualityHint?: string | null;
+  streamInfo?: StreamPlaybackInfo;
 }
 
 function formatTime(seconds: number): string {
@@ -83,6 +90,7 @@ export function VideoPlayer({
   plexRatingKey,
   plexUrl,
   qualityHint,
+  streamInfo,
 }: VideoPlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -90,18 +98,34 @@ export function VideoPlayer({
   const clickTimer = useRef<ReturnType<typeof setTimeout>>(null);
   const hlsRef = useRef<Hls | null>(null);
   const bufferTierRef = useRef<BufferTier>(qualityTierFromHint(qualityHint));
-  const [initialBuffering, setInitialBuffering] = useState(false);
+  const autoplayAttemptedRef = useRef(false);
+  const lastSubtitleRef = useRef<number | null>(null);
+  const audioGraphRef = useRef<{
+    ctx: AudioContext;
+    delay: DelayNode;
+  } | null>(null);
 
+  const [initialBuffering, setInitialBuffering] = useState(false);
   const [playing, setPlaying] = useState(false);
   const [muted, setMuted] = useState(false);
   const [volume, setVolume] = useState(1);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
+  const [videoWidth, setVideoWidth] = useState(0);
+  const [videoHeight, setVideoHeight] = useState(0);
   const [showControls, setShowControls] = useState(true);
   const [fullscreen, setFullscreen] = useState(false);
   const [buffering, setBuffering] = useState(false);
   const [playbackError, setPlaybackError] = useState<string | null>(null);
   const [remoteError, setRemoteError] = useState<string | null>(null);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
+  const [showStreamInfo, setShowStreamInfo] = useState(false);
+  const [showSyncPanel, setShowSyncPanel] = useState(false);
+  const [audioDelayMs, setAudioDelayMs] = useState(0);
+  const [externalSubUrl, setExternalSubUrl] = useState<string | null>(null);
+  const [externalSubName, setExternalSubName] = useState<string | null>(null);
+  const [externalSubEnabled, setExternalSubEnabled] = useState(false);
+
   const showAirPlay = isSafariBrowser();
 
   const isHls = isHlsSource(src);
@@ -112,6 +136,9 @@ export function VideoPlayer({
         document.createElement("video").canPlayType("application/vnd.apple.mpegurl") !== ""));
 
   const playbackSrc = buildRemotePlaybackUrl(src, { plexToken });
+
+  const captionsOn =
+    externalSubEnabled || (subtitleIndex !== null && !externalSubEnabled);
 
   const { castReady, casting, castError, startCast, stopCast, clearCastError } = useCast({
     title,
@@ -124,13 +151,100 @@ export function VideoPlayer({
     currentTime,
   });
 
+  const ensureAudioGraph = useCallback((video: HTMLVideoElement) => {
+    if (audioGraphRef.current) return audioGraphRef.current;
+    const ctx = new AudioContext();
+    const source = ctx.createMediaElementSource(video);
+    const delay = ctx.createDelay(10.0);
+    delay.delayTime.value = 0;
+    source.connect(delay);
+    delay.connect(ctx.destination);
+    audioGraphRef.current = { ctx, delay };
+    return audioGraphRef.current;
+  }, []);
+
+  const applyAudioDelay = useCallback(
+    (ms: number) => {
+      const video = videoRef.current;
+      if (!video) return;
+      setAudioDelayMs(ms);
+      const graph = ensureAudioGraph(video);
+      graph.delay.delayTime.value = Math.max(0, ms) / 1000;
+      void graph.ctx.resume().catch(() => undefined);
+    },
+    [ensureAudioGraph]
+  );
+
+  const bumpAudioLater = useCallback(() => {
+    applyAudioDelay(Math.min(5000, audioDelayMs + 50));
+  }, [applyAudioDelay, audioDelayMs]);
+
+  const bumpAudioEarlier = useCallback(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    const seekBy = 0.05;
+    video.currentTime = Math.min(
+      Math.max(0, (video.duration || Infinity) - 0.25),
+      video.currentTime + seekBy
+    );
+    applyAudioDelay(Math.max(0, audioDelayMs - 50));
+  }, [applyAudioDelay, audioDelayMs]);
+
+  const resetAudioSync = useCallback(() => {
+    applyAudioDelay(0);
+  }, [applyAudioDelay]);
+
+  const attemptAutoplay = useCallback(async () => {
+    const video = videoRef.current;
+    if (!video || autoplayAttemptedRef.current) return;
+    autoplayAttemptedRef.current = true;
+    setInitialBuffering(true);
+    try {
+      await playWhenBuffered(video, getMinPlayBufferSeconds(bufferTierRef.current));
+      setPlaying(true);
+    } catch {
+      /* Browser may block autoplay until user interacts */
+    } finally {
+      setInitialBuffering(false);
+    }
+  }, []);
+
   useEffect(() => {
     bufferTierRef.current = qualityTierFromHint(qualityHint);
   }, [qualityHint, src]);
 
   useEffect(() => {
     setPlaybackError(null);
+    autoplayAttemptedRef.current = false;
+    setAudioDelayMs(0);
+    if (audioGraphRef.current) {
+      audioGraphRef.current.delay.delayTime.value = 0;
+    }
   }, [src]);
+
+  useEffect(() => {
+    return () => {
+      if (externalSubUrl) URL.revokeObjectURL(externalSubUrl);
+    };
+  }, [externalSubUrl]);
+
+  useEffect(() => {
+    if (subtitleIndex !== null) {
+      lastSubtitleRef.current = subtitleIndex;
+      if (externalSubEnabled) setExternalSubEnabled(false);
+    }
+  }, [subtitleIndex, externalSubEnabled]);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || !externalSubUrl || !externalSubEnabled) return;
+    const timer = window.setTimeout(() => {
+      for (const track of video.textTracks) {
+        track.mode = "showing";
+      }
+    }, 100);
+    return () => window.clearTimeout(timer);
+  }, [externalSubUrl, externalSubEnabled, src]);
 
   const updateBufferTier = useCallback((tier: BufferTier) => {
     if (tier === bufferTierRef.current) return;
@@ -155,7 +269,7 @@ export function VideoPlayer({
         if (maxHeight > 0) {
           updateBufferTier(qualityTierFromHeight(maxHeight));
         }
-        if (hls.subtitleTracks.length > 0) {
+        if (hls.subtitleTracks.length > 0 && !externalSubEnabled) {
           hls.subtitleDisplay = subtitleIndex !== null;
           if (subtitleIndex !== null) {
             const byStreamId = hls.subtitleTracks.findIndex((t) => t.id === subtitleIndex);
@@ -167,6 +281,7 @@ export function VideoPlayer({
             hls.subtitleTrack = idx;
           }
         }
+        void attemptAutoplay();
       });
       hls.on(Hls.Events.ERROR, (_event, data) => {
         if (data.fatal) {
@@ -184,15 +299,27 @@ export function VideoPlayer({
 
     video.preload = "auto";
     video.src = playbackSrc;
+    const onReady = () => void attemptAutoplay();
+    video.addEventListener("loadeddata", onReady, { once: true });
     return () => {
+      video.removeEventListener("loadeddata", onReady);
       video.removeAttribute("src");
       video.load();
     };
-  }, [playbackSrc, isHls, useNativeHls, subtitleIndex, qualityHint, updateBufferTier]);
+  }, [
+    playbackSrc,
+    isHls,
+    useNativeHls,
+    subtitleIndex,
+    qualityHint,
+    updateBufferTier,
+    attemptAutoplay,
+    externalSubEnabled,
+  ]);
 
   useEffect(() => {
     const hls = hlsRef.current;
-    if (!hls || !hls.subtitleTracks.length) return;
+    if (!hls || !hls.subtitleTracks.length || externalSubEnabled) return;
     hls.subtitleDisplay = subtitleIndex !== null;
     if (subtitleIndex === null) {
       hls.subtitleTrack = -1;
@@ -203,7 +330,12 @@ export function VideoPlayer({
       /en|english/i.test(t.name || t.lang || "")
     );
     hls.subtitleTrack = byStreamId >= 0 ? byStreamId : englishIdx >= 0 ? englishIdx : 0;
-  }, [subtitleIndex]);
+  }, [subtitleIndex, externalSubEnabled]);
+
+  useEffect(() => {
+    const hls = hlsRef.current;
+    if (hls) hls.subtitleDisplay = externalSubEnabled ? false : subtitleIndex !== null;
+  }, [externalSubEnabled, subtitleIndex]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -215,7 +347,7 @@ export function VideoPlayer({
     };
     video.addEventListener("loadedmetadata", setStart);
     return () => video.removeEventListener("loadedmetadata", setStart);
-  }, [initialProgress]);
+  }, [initialProgress, src]);
 
   useEffect(() => {
     const onFullscreenChange = () => {
@@ -223,6 +355,12 @@ export function VideoPlayer({
     };
     document.addEventListener("fullscreenchange", onFullscreenChange);
     return () => document.removeEventListener("fullscreenchange", onFullscreenChange);
+  }, []);
+
+  useEffect(() => {
+    const closeMenu = () => setContextMenu(null);
+    document.addEventListener("click", closeMenu);
+    return () => document.removeEventListener("click", closeMenu);
   }, []);
 
   const resetHideTimer = useCallback(() => {
@@ -271,13 +409,14 @@ export function VideoPlayer({
   const handleVideoClick = () => {
     if (clickTimer.current) clearTimeout(clickTimer.current);
     clickTimer.current = setTimeout(() => {
-      togglePlay();
+      void togglePlay();
       clickTimer.current = null;
     }, 250);
   };
 
   const handleVideoDoubleClick = (e: React.MouseEvent) => {
     e.preventDefault();
+    e.stopPropagation();
     if (clickTimer.current) {
       clearTimeout(clickTimer.current);
       clickTimer.current = null;
@@ -287,6 +426,12 @@ export function VideoPlayer({
 
   const stopClickPropagation = (e: React.MouseEvent) => {
     e.stopPropagation();
+  };
+
+  const handleContextMenu = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setContextMenu({ x: e.clientX, y: e.clientY });
   };
 
   const seek = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -304,6 +449,41 @@ export function VideoPlayer({
     if (!video) return;
     video.currentTime = Math.max(0, Math.min(video.duration, video.currentTime + seconds));
     resetHideTimer();
+  };
+
+  const toggleCaptions = () => {
+    if (externalSubUrl) {
+      const next = !externalSubEnabled;
+      setExternalSubEnabled(next);
+      if (next) onSubtitleChange?.(null);
+      return;
+    }
+    if (subtitleIndex !== null) {
+      lastSubtitleRef.current = subtitleIndex;
+      onSubtitleChange?.(null);
+      return;
+    }
+    if (lastSubtitleRef.current !== null) {
+      onSubtitleChange?.(lastSubtitleRef.current);
+      return;
+    }
+    if (subtitleTracks.length > 0) {
+      onSubtitleChange?.(subtitleTracks[0].index);
+    }
+  };
+
+  const handleExternalSubtitle = async (file: File) => {
+    try {
+      if (externalSubUrl) URL.revokeObjectURL(externalSubUrl);
+      const url = await subtitleFileToObjectUrl(file);
+      setExternalSubUrl(url);
+      setExternalSubName(file.name);
+      setExternalSubEnabled(true);
+      const hls = hlsRef.current;
+      if (hls) hls.subtitleDisplay = false;
+    } catch (err) {
+      setPlaybackError(err instanceof Error ? err.message : "Could not load subtitle file");
+    }
   };
 
   const handleAirPlay = async () => {
@@ -334,6 +514,10 @@ export function VideoPlayer({
   }, []);
 
   const progressPct = duration > 0 ? (currentTime / duration) * 100 : 0;
+  const bufferedAhead = videoRef.current ? getBufferedAhead(videoRef.current) : 0;
+
+  const showTrackSelector =
+    (audioTracks.length > 0 && onAudioChange) || Boolean(onSubtitleChange);
 
   return (
     <div
@@ -341,47 +525,109 @@ export function VideoPlayer({
       className="relative h-full w-full bg-black"
       onMouseMove={resetHideTimer}
       onTouchStart={resetHideTimer}
-      onClick={handleVideoClick}
-      onDoubleClick={handleVideoDoubleClick}
+      onContextMenu={handleContextMenu}
     >
-      <video
-        ref={videoRef}
-        className="h-full w-full"
-        poster={poster}
-        playsInline
-        disableRemotePlayback={false}
-        // AirPlay 2 support (Safari / iOS / macOS)
-        {...({ "x-webkit-airplay": "allow", airplay: "allow" } as React.VideoHTMLAttributes<HTMLVideoElement>)}
-        onWaiting={() => setBuffering(true)}
-        onCanPlay={() => setBuffering(false)}
-        onLoadedMetadata={(e) => {
-          const v = e.currentTarget;
-          if (v.videoHeight > 0) {
-            updateBufferTier(qualityTierFromHeight(v.videoHeight));
-          }
-        }}
-        onPlay={() => setPlaying(true)}
-        onPause={() => setPlaying(false)}
-        onTimeUpdate={(e) => {
-          const v = e.currentTarget;
-          setCurrentTime(v.currentTime);
-          setDuration(v.duration || 0);
-          if (onProgress && v.duration) {
-            onProgress(v.currentTime, (v.currentTime / v.duration) * 100);
-          }
-        }}
-        onEnded={() => {
-          setPlaying(false);
-          onEnded?.();
-        }}
-        onError={() => {
-          setPlaybackError(
-            isDirectPlay
-              ? "Direct play failed — your browser may not support this codec. Try Transcode."
-              : "Playback failed. Try direct play or check server settings."
-          );
-        }}
-      />
+      <div
+        className="absolute inset-0"
+        onClick={handleVideoClick}
+        onDoubleClick={handleVideoDoubleClick}
+      >
+        <video
+          ref={videoRef}
+          className="h-full w-full"
+          poster={poster}
+          playsInline
+          autoPlay
+          disableRemotePlayback={false}
+          {...({ "x-webkit-airplay": "allow", airplay: "allow" } as React.VideoHTMLAttributes<HTMLVideoElement>)}
+          onWaiting={() => setBuffering(true)}
+          onCanPlay={() => setBuffering(false)}
+          onLoadedMetadata={(e) => {
+            const v = e.currentTarget;
+            setVideoWidth(v.videoWidth);
+            setVideoHeight(v.videoHeight);
+            if (v.videoHeight > 0) {
+              updateBufferTier(qualityTierFromHeight(v.videoHeight));
+            }
+          }}
+          onPlay={() => setPlaying(true)}
+          onPause={() => setPlaying(false)}
+          onTimeUpdate={(e) => {
+            const v = e.currentTarget;
+            setCurrentTime(v.currentTime);
+            setDuration(v.duration || 0);
+            if (onProgress && v.duration) {
+              onProgress(v.currentTime, (v.currentTime / v.duration) * 100);
+            }
+          }}
+          onEnded={() => {
+            setPlaying(false);
+            onEnded?.();
+          }}
+          onError={() => {
+            setPlaybackError(
+              isDirectPlay
+                ? "Direct play failed — your browser may not support this codec. Try Transcode."
+                : "Playback failed. Try direct play or check server settings."
+            );
+          }}
+        >
+          {externalSubUrl && externalSubEnabled && (
+            <track
+              kind="subtitles"
+              src={externalSubUrl}
+              label={externalSubName ?? "External"}
+              srcLang="en"
+              default
+            />
+          )}
+        </video>
+      </div>
+
+      {contextMenu && (
+        <div
+          className="fixed z-[90] min-w-[12rem] rounded-md bg-zinc-900 py-1 shadow-xl ring-1 ring-white/10"
+          style={{ left: contextMenu.x, top: contextMenu.y }}
+          onClick={stopClickPropagation}
+        >
+          <button
+            type="button"
+            className="block w-full px-4 py-2 text-left text-sm hover:bg-white/10"
+            onClick={() => {
+              setContextMenu(null);
+              setShowStreamInfo(true);
+            }}
+          >
+            Get info about the stream
+          </button>
+        </div>
+      )}
+
+      {showStreamInfo && (
+        <StreamInfoModal
+          info={{
+            streamUrl: src,
+            isDirectPlay,
+            qualityHint,
+            ...streamInfo,
+            audioTracks,
+            subtitleTracks,
+            audioIndex,
+            subtitleIndex,
+          }}
+          live={{
+            width: videoWidth,
+            height: videoHeight,
+            duration,
+            currentTime,
+            buffered: bufferedAhead,
+            playing,
+            audioSyncMs: audioDelayMs,
+            externalSubtitle: externalSubEnabled ? externalSubName : null,
+          }}
+          onClose={() => setShowStreamInfo(false)}
+        />
+      )}
 
       {playbackError && (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 bg-black/80 px-6 text-center">
@@ -417,17 +663,15 @@ export function VideoPlayer({
           "absolute inset-0 flex flex-col justify-end bg-gradient-to-t from-black/80 via-transparent to-black/40 transition-opacity duration-300",
           showControls ? "opacity-100" : "opacity-0 pointer-events-none"
         )}
+        onClick={stopClickPropagation}
+        onDoubleClick={handleVideoDoubleClick}
       >
         <div className="px-4 pb-2 pt-16 md:px-8">
           <h2 className="mb-4 text-lg font-semibold md:text-xl">{title}</h2>
 
-          {/* Progress bar */}
           <div
             className="group mb-3 h-1 cursor-pointer rounded bg-white/30 transition-all hover:h-1.5"
-            onClick={(e) => {
-              stopClickPropagation(e);
-              seek(e);
-            }}
+            onClick={seek}
           >
             <div
               className="relative h-full rounded bg-netflix-red"
@@ -439,20 +683,63 @@ export function VideoPlayer({
 
           <div className="flex items-center justify-between gap-4">
             <div className="flex items-center gap-3 md:gap-4">
-              <button type="button" onClick={(e) => { stopClickPropagation(e); togglePlay(); }} className="text-white hover:text-netflix-light-gray">
+              <button type="button" onClick={() => void togglePlay()} className="text-white hover:text-netflix-light-gray">
                 {playing ? <Pause className="h-7 w-7 md:h-8 md:w-8" /> : <Play className="h-7 w-7 fill-current md:h-8 md:w-8" />}
               </button>
-              <button type="button" onClick={(e) => { stopClickPropagation(e); skip(-10); }} className="hidden text-white hover:text-netflix-light-gray sm:block">
+              <button type="button" onClick={() => skip(-10)} className="hidden text-white hover:text-netflix-light-gray sm:block">
                 <SkipBack className="h-5 w-5" />
               </button>
-              <button type="button" onClick={(e) => { stopClickPropagation(e); skip(10); }} className="hidden text-white hover:text-netflix-light-gray sm:block">
+              <button type="button" onClick={() => skip(10)} className="hidden text-white hover:text-netflix-light-gray sm:block">
                 <SkipForward className="h-5 w-5" />
               </button>
+
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setShowSyncPanel((v) => !v)}
+                  className={cn(
+                    "text-white hover:text-netflix-light-gray",
+                    audioDelayMs > 0 && "text-yellow-300"
+                  )}
+                  title="Audio sync"
+                >
+                  <Gauge className="h-5 w-5" />
+                </button>
+                {showSyncPanel && (
+                  <div className="absolute bottom-full left-0 mb-2 w-56 rounded bg-black/95 p-3 text-sm shadow-xl ring-1 ring-white/10">
+                    <p className="mb-2 text-xs text-netflix-gray">Sync audio with video</p>
+                    <div className="flex items-center justify-between gap-2">
+                      <button
+                        type="button"
+                        onClick={bumpAudioEarlier}
+                        className="rounded bg-white/10 px-2 py-1 hover:bg-white/20"
+                      >
+                        −50ms
+                      </button>
+                      <span className="font-mono text-xs">{audioDelayMs}ms delay</span>
+                      <button
+                        type="button"
+                        onClick={bumpAudioLater}
+                        className="rounded bg-white/10 px-2 py-1 hover:bg-white/20"
+                      >
+                        +50ms
+                      </button>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={resetAudioSync}
+                      className="mt-2 w-full rounded bg-white/10 py-1 text-xs hover:bg-white/20"
+                    >
+                      Reset sync
+                    </button>
+                  </div>
+                )}
+              </div>
+
               <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={(e) => {
-                    stopClickPropagation(e);
+                  onClick={() => {
                     const v = videoRef.current;
                     if (!v) return;
                     v.muted = !v.muted;
@@ -467,7 +754,6 @@ export function VideoPlayer({
                   max={1}
                   step={0.05}
                   value={volume}
-                  onClick={stopClickPropagation}
                   onChange={(e) => {
                     const val = parseFloat(e.target.value);
                     setVolume(val);
@@ -486,26 +772,37 @@ export function VideoPlayer({
             </div>
 
             <div className="flex items-center gap-3">
-              {(audioTracks.length > 1 || subtitleTracks.length > 0) &&
-                onAudioChange &&
-                onSubtitleChange && (
+              {(onSubtitleChange || subtitleTracks.length > 0 || externalSubUrl) && (
+                <button
+                  type="button"
+                  onClick={toggleCaptions}
+                  className={cn(
+                    "text-white hover:text-netflix-light-gray",
+                    captionsOn && "text-netflix-red"
+                  )}
+                  title={captionsOn ? "Turn off captions" : "Turn on captions"}
+                >
+                  <Subtitles className="h-5 w-5" />
+                </button>
+              )}
+
+              {showTrackSelector && (
                 <TrackSelector
                   audioTracks={audioTracks}
                   subtitleTracks={subtitleTracks}
                   audioIndex={audioIndex}
-                  subtitleIndex={subtitleIndex}
-                  onAudioChange={onAudioChange}
-                  onSubtitleChange={onSubtitleChange}
+                  subtitleIndex={externalSubEnabled ? null : subtitleIndex}
+                  onAudioChange={onAudioChange ?? (() => undefined)}
+                  onSubtitleChange={onSubtitleChange ?? (() => undefined)}
+                  onExternalSubtitle={handleExternalSubtitle}
+                  externalSubtitleName={externalSubEnabled ? externalSubName : null}
                 />
               )}
 
               {transcodeAvailable && onRequestTranscode && isDirectPlay && (
                 <button
                   type="button"
-                  onClick={(e) => {
-                    stopClickPropagation(e);
-                    onRequestTranscode();
-                  }}
+                  onClick={onRequestTranscode}
                   className="text-xs text-netflix-light-gray hover:text-white"
                   title="Transcode for unsupported codecs or audio/subtitle selection"
                 >
@@ -514,23 +811,19 @@ export function VideoPlayer({
               )}
 
               {showAirPlay && (
-              <button
-                type="button"
-                onClick={(e) => {
-                  stopClickPropagation(e);
-                  void handleAirPlay();
-                }}
-                className="text-white hover:text-netflix-light-gray"
-                title="AirPlay"
-              >
-                <Airplay className="h-5 w-5" />
-              </button>
+                <button
+                  type="button"
+                  onClick={() => void handleAirPlay()}
+                  className="text-white hover:text-netflix-light-gray"
+                  title="AirPlay"
+                >
+                  <Airplay className="h-5 w-5" />
+                </button>
               )}
 
               <button
                 type="button"
-                onClick={(e) => {
-                  stopClickPropagation(e);
+                onClick={() => {
                   clearCastError();
                   if (casting) stopCast();
                   else void startCast();
@@ -545,22 +838,13 @@ export function VideoPlayer({
                 <Cast className="h-5 w-5" />
               </button>
 
-              <button
-                type="button"
-                onClick={(e) => {
-                  stopClickPropagation(e);
-                  void toggleFullscreen();
-                }}
-                className="text-white hover:text-netflix-light-gray"
-              >
+              <button type="button" onClick={() => void toggleFullscreen()} className="text-white hover:text-netflix-light-gray">
                 {fullscreen ? <Minimize className="h-5 w-5" /> : <Maximize className="h-5 w-5" />}
               </button>
             </div>
           </div>
           {(castError || remoteError) && (
-            <p className="mt-2 text-xs text-yellow-300">
-              {castError || remoteError}
-            </p>
+            <p className="mt-2 text-xs text-yellow-300">{castError || remoteError}</p>
           )}
         </div>
       </div>
