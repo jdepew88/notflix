@@ -44,25 +44,40 @@ function normalizePlexUrl(url: string): string {
   return url.replace(/\/$/, "");
 }
 
+const PLEX_FETCH_TIMEOUT_MS = 45_000;
+
 async function plexGet<T>(
   plexUrl: string,
   token: string,
   path: string
 ): Promise<T> {
   const url = `${normalizePlexUrl(plexUrl)}${path}${path.includes("?") ? "&" : "?"}X-Plex-Token=${token}`;
-  const res = await fetch(url, {
-    headers: { Accept: "application/json" },
-    next: { revalidate: 300 },
-  });
-  if (!res.ok) {
-    if (res.status === 401) {
+  try {
+    const res = await fetch(url, {
+      headers: { Accept: "application/json" },
+      cache: "no-store",
+      signal: AbortSignal.timeout(PLEX_FETCH_TIMEOUT_MS),
+    });
+    if (!res.ok) {
+      if (res.status === 401) {
+        throw new Error(
+          "Plex API error: 401 Unauthorized — sign in with Plex in Settings to refresh your token."
+        );
+      }
+      throw new Error(`Plex API error: ${res.status} ${res.statusText}`);
+    }
+    return res.json() as Promise<T>;
+  } catch (err) {
+    if (err instanceof Error && err.name === "TimeoutError") {
+      throw new Error(`Plex timed out reaching ${normalizePlexUrl(plexUrl)}`);
+    }
+    if (err instanceof TypeError && /fetch failed/i.test(err.message)) {
       throw new Error(
-        "Plex API error: 401 Unauthorized — sign in with Plex in Settings to refresh your token."
+        `Plex unreachable at ${normalizePlexUrl(plexUrl)}. Use the server URL your container can reach (see PLEX_URL in .env) and Save & Sync.`
       );
     }
-    throw new Error(`Plex API error: ${res.status} ${res.statusText}`);
+    throw err;
   }
-  return res.json() as Promise<T>;
 }
 
 export function parseGuidIds(guid?: string): { tvdbId?: number; tmdbId?: number } {

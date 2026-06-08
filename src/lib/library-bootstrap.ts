@@ -1,4 +1,5 @@
 import { getServerSettingsSync } from "./server-settings";
+import { plexConfigured, withResolvedPlex } from "./plex-connection";
 import {
   getStoredTitleCount,
   scheduleBackgroundLibrarySync,
@@ -11,12 +12,9 @@ import {
 } from "./library-store";
 
 export async function bootstrapLibraryOnStartup(): Promise<void> {
-  const settings = getServerSettingsSync();
+  const settings = withResolvedPlex(getServerSettingsSync());
   const db = readLibraryDatabase();
-  const configured = Boolean(
-    (settings.plexUrl?.trim() && settings.plexToken?.trim()) ||
-      settings.libraryPath?.trim()
-  );
+  const configured = plexConfigured(settings) || Boolean(settings.libraryPath?.trim());
 
   if (!configured) return;
 

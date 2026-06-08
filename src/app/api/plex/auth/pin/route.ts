@@ -15,6 +15,7 @@ import {
 } from "@/lib/plex-pin-sessions";
 import { mergeSettings } from "@/lib/settings";
 import { testPlexConnection } from "@/lib/plex";
+import { getPlexUrl } from "@/lib/env";
 
 async function completeAuthorization(
   request: NextRequest,
@@ -24,7 +25,8 @@ async function completeAuthorization(
   const settings = mergeSettings(request);
   const resources = await fetchPlexResources(authToken);
   const selected = selectPlexServerUrl(resources, settings.plexUrl);
-  const plexUrl = selected.url ?? settings.plexUrl ?? "";
+  const envUrl = getPlexUrl();
+  const plexUrl = envUrl || selected.url || settings.plexUrl || "";
 
   let serverName = selected.serverName;
   if (plexUrl) {

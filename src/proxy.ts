@@ -5,7 +5,7 @@ import type { NextRequest } from "next/server";
 const PUBLIC_PATHS = ["/", "/signup", "/login", "/settings"];
 const AUTH_ENTRY_PATHS = ["/", "/signup", "/login"];
 
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const token = request.cookies.get(SESSION_COOKIE)?.value;
   const session = token ? await parseSessionToken(token) : null;

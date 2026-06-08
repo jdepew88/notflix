@@ -25,7 +25,9 @@ export interface ServerSettings {
 }
 
 function settingsFilePath(): string {
-  const dataPath = process.env.DATA_PATH?.trim() || path.join(process.cwd(), ".data");
+  const dataPath =
+    process.env.DATA_PATH?.trim() ||
+    path.join(/* turbopackIgnore: true */ process.cwd(), ".data");
   return path.join(dataPath, "settings.json");
 }
 
@@ -77,13 +79,26 @@ export function invalidateSettingsCache(): void {
   cached = null;
 }
 
-/** Env seeds empty fields; persisted file overrides env when values exist. */
+/** Docker/.env values for URL paths always win over settings.json (sign-in may store relay URLs). */
+function pinEnvInfrastructure(
+  settings: ServerSettings,
+  env: ServerSettings
+): ServerSettings {
+  return {
+    ...settings,
+    plexUrl: env.plexUrl || settings.plexUrl,
+    libraryPath: env.libraryPath || settings.libraryPath,
+    plexToken: settings.plexToken || env.plexToken,
+  };
+}
+
+/** Env seeds empty fields; persisted file overrides env for secrets; infra URLs pinned from env. */
 export function getServerSettingsSync(): ServerSettings {
   if (cached) return cached;
 
   const fromEnv = settingsFromEnv();
   const fromFile = readPersistedFile();
-  cached = mergeLayer(fromEnv, fromFile);
+  cached = pinEnvInfrastructure(mergeLayer(fromEnv, fromFile), fromEnv);
   return cached;
 }
 
@@ -116,7 +131,9 @@ export function seedSettingsFromEnv(): void {
   saveServerSettings(updated);
 }
 
-/** Env values replace empty persisted fields (keeps UI in sync after .env changes). */
+const ENV_PINNED_KEYS: Array<keyof ServerSettings> = ["plexUrl", "libraryPath"];
+
+/** Env values replace empty persisted fields; infra URLs always follow env when set. */
 function pickEnvOverrides(
   env: ServerSettings,
   file: Partial<ServerSettings>
@@ -126,8 +143,10 @@ function pickEnvOverrides(
     if (key === "directPlay") return;
     const envVal = env[key];
     const fileVal = file[key];
-    if (typeof envVal === "string" && envVal && !fileVal) {
-      (out as Record<string, string>)[key] = envVal;
+    if (typeof envVal === "string" && envVal) {
+      if (ENV_PINNED_KEYS.includes(key) || !fileVal) {
+        (out as Record<string, string>)[key] = envVal;
+      }
     }
   });
   return out;

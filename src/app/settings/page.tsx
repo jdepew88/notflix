@@ -28,6 +28,7 @@ export default function SettingsPage() {
   const [refreshResult, setRefreshResult] = useState("");
   const [plexSigningIn, setPlexSigningIn] = useState(false);
   const [plexNeedsSignIn, setPlexNeedsSignIn] = useState(false);
+  const [plexUrlPinned, setPlexUrlPinned] = useState(false);
   const plexPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const plexPollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const plexPollCompleteRef = useRef(false);
@@ -42,6 +43,28 @@ export default function SettingsPage() {
   useEffect(() => {
     setForm(settings);
   }, [settings]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadServerConfig() {
+      const res = await fetch("/api/settings/sync?config=1", { credentials: "same-origin" }).catch(
+        () => null
+      );
+      if (cancelled || !res?.ok) return;
+      const data = await res.json();
+      if (data.settings) {
+        setPlexUrlPinned(Boolean(data.plexUrlPinned));
+        updateSettings(data.settings);
+        setForm((prev) => ({ ...prev, ...data.settings }));
+      }
+    }
+
+    void loadServerConfig();
+    return () => {
+      cancelled = true;
+    };
+  }, [updateSettings]);
 
   useEffect(() => {
     let cancelled = false;
@@ -159,7 +182,7 @@ export default function SettingsPage() {
     const nextForm = {
       ...form,
       plexToken: auth.plexToken,
-      plexUrl: auth.plexUrl || form.plexUrl,
+      plexUrl: plexUrlPinned ? form.plexUrl : auth.plexUrl || form.plexUrl,
     };
     setForm(nextForm);
     updateSettings(nextForm);
@@ -255,11 +278,16 @@ export default function SettingsPage() {
     setPlexServer("");
     setPlexNeedsSignIn(false);
     try {
-      const res = await fetchWithSettings("/api/settings/sync?test=plex", form);
+      await syncSettingsToServer(form);
+      const res = await fetch("/api/settings/sync?test=plex", { credentials: "same-origin" });
       const data = await res.json();
       if (data.ok) {
         setPlexStatus("ok");
-        setPlexServer(data.serverName ?? "Connected");
+        setPlexServer(
+          data.serverName
+            ? `${data.serverName} · ${data.plexUrl ?? form.plexUrl}`
+            : `Connected · ${data.plexUrl ?? form.plexUrl}`
+        );
       } else {
         setPlexStatus("error");
         setPlexServer(data.error ?? "Failed");
@@ -330,11 +358,15 @@ export default function SettingsPage() {
   };
 
   const testPlexDiagnostics = async () => {
+    if (!form.plexToken) return;
     setPlexStatus("checking");
     setPlexServer("");
     setPlexNeedsSignIn(false);
     try {
-      const res = await fetchWithSettings("/api/settings/diagnostics?action=plex", form);
+      await syncSettingsToServer(form);
+      const res = await fetch("/api/settings/diagnostics?action=plex", {
+        credentials: "same-origin",
+      });
       const data = await res.json();
       if (data.ok) {
         setPlexStatus("ok");
@@ -348,6 +380,42 @@ export default function SettingsPage() {
       setPlexStatus("error");
     }
   };
+
+  useEffect(() => {
+    if (!form.plexToken) return;
+
+    let cancelled = false;
+
+    async function verifyPlexConnection() {
+      try {
+        const res = await fetch("/api/settings/sync?test=plex", { credentials: "same-origin" });
+        if (cancelled || !res.ok) return;
+        const data = await res.json();
+        if (data.ok) {
+          setPlexStatus("ok");
+          setPlexServer(
+            data.serverName
+              ? `${data.serverName} · ${data.plexUrl ?? form.plexUrl}`
+              : `Connected · ${data.plexUrl ?? form.plexUrl}`
+          );
+          setPlexNeedsSignIn(false);
+        } else {
+          setPlexStatus("error");
+          setPlexServer(data.error ?? "Plex disconnected");
+          setPlexNeedsSignIn(isPlexUnauthorizedMessage(data.error));
+        }
+      } catch {
+        if (!cancelled) setPlexStatus("error");
+      }
+    }
+
+    void verifyPlexConnection();
+    const id = window.setInterval(verifyPlexConnection, 90_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [form.plexToken, form.plexUrl]);
 
   const forceRefreshPlex = async () => {
     setRefreshing(true);
@@ -505,12 +573,20 @@ export default function SettingsPage() {
             Opens plex.tv in a popup. After you approve access, Notflix fills in your token and server URL.
           </p>
           <label className="mb-1 block text-sm text-netflix-light-gray">Plex server URL</label>
+          {plexUrlPinned && form.plexUrl && (
+            <p className="mb-2 text-xs text-netflix-gray">
+              Locked to <code className="text-white">{form.plexUrl}</code> from server{" "}
+              <code className="text-white">PLEX_URL</code> (.env / compose). Sign-in only updates
+              your token.
+            </p>
+          )}
           <input
             type="text"
             value={form.plexUrl}
             onChange={(e) => setForm({ ...form, plexUrl: e.target.value })}
-            placeholder="http://192.168.1.100:32400"
-            className="mb-4 w-full rounded bg-[#333] px-4 py-3 focus:outline-none focus:ring-2 focus:ring-white/30"
+            readOnly={plexUrlPinned}
+            placeholder="http://172.16.0.10:32400"
+            className="mb-4 w-full rounded bg-[#333] px-4 py-3 focus:outline-none focus:ring-2 focus:ring-white/30 disabled:opacity-80"
           />
           <label className="mb-1 block text-sm text-netflix-light-gray">Plex token</label>
           <input

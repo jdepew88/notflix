@@ -51,10 +51,13 @@ function parseMediaFilename(filename: string): {
   return { title: base.replace(/[._]/g, " ").trim() };
 }
 
+export type LibraryScanProgress = (found: number, currentDir: string) => void;
+
 async function scanDirectory(
   dirPath: string,
   rootPath: string,
-  items: MediaItem[]
+  items: MediaItem[],
+  onProgress?: LibraryScanProgress
 ): Promise<void> {
   let entries;
   try {
@@ -63,12 +66,14 @@ async function scanDirectory(
     return;
   }
 
+  onProgress?.(items.length, dirPath);
+
   for (const entry of entries) {
     const fullPath = path.join(dirPath, entry.name);
     if (entry.name.startsWith(".")) continue;
 
     if (entry.isDirectory()) {
-      await scanDirectory(fullPath, rootPath, items);
+      await scanDirectory(fullPath, rootPath, items, onProgress);
     } else if (entry.isFile() && isVideoFile(entry.name)) {
       const relativePath = path.relative(rootPath, fullPath);
       const parsed = parseMediaFilename(entry.name);
@@ -85,13 +90,20 @@ async function scanDirectory(
         episode: parsed.episode,
         overview: relativePath,
       });
+      if (items.length % 25 === 0) {
+        onProgress?.(items.length, dirPath);
+      }
     }
   }
 }
 
-export async function scanLibrary(libraryPath: string): Promise<MediaItem[]> {
+export async function scanLibrary(
+  libraryPath: string,
+  onProgress?: LibraryScanProgress
+): Promise<MediaItem[]> {
   const items: MediaItem[] = [];
-  await scanDirectory(libraryPath, libraryPath, items);
+  await scanDirectory(libraryPath, libraryPath, items, onProgress);
+  onProgress?.(items.length, libraryPath);
   return items.sort((a, b) => a.title.localeCompare(b.title));
 }
 

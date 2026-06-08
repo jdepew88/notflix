@@ -24,7 +24,7 @@ export interface ProbeResult {
   needsTranscode: boolean;
 }
 
-const CACHE_DIR = path.join(process.cwd(), ".cache", "debrid");
+const CACHE_DIR = path.join(/* turbopackIgnore: true */ process.cwd(), ".cache", "debrid");
 
 const BROWSER_AUDIO = new Set(["aac", "mp3", "opus", "flac", "vorbis"]);
 const TRANSCODE_AUDIO = new Set(["ac3", "eac3", "dts", "truehd", "dts_hd_ma", "dts-hd", "pcm_s16le"]);

@@ -69,8 +69,18 @@ export function updateLibrarySyncState(
 
 export function syncProgressPercent(state: LibrarySyncState): number {
   if (state.status === "done") return 100;
+  if (state.status === "error") return 0;
+
+  if (state.phase === "fetching" && state.itemsLoaded > 0 && state.current === 0) {
+    return Math.min(65, 12 + Math.floor(state.itemsLoaded / 120));
+  }
+
+  if (state.phase === "enriching") return 72;
+  if (state.phase === "building-rows") return 85;
+  if (state.phase === "saving") return 95;
+
   if (state.total <= 0) {
-    if (state.status === "running") return 5;
+    if (state.status === "running") return 8;
     return 0;
   }
   return Math.min(99, Math.round((state.current / state.total) * 100));

@@ -28,7 +28,10 @@ export interface PlexResource {
 }
 
 function dataPath(): string {
-  return process.env.DATA_PATH?.trim() || path.join(process.cwd(), ".data");
+  return (
+    process.env.DATA_PATH?.trim() ||
+    path.join(/* turbopackIgnore: true */ process.cwd(), ".data")
+  );
 }
 
 export function getPlexClientIdentifier(): string {

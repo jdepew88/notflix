@@ -8,6 +8,7 @@ import { scanLibrary, buildContentRows } from "./library";
 import { enrichLibraryWithTmdb } from "./tmdb";
 import { enrichWithTvdb } from "./tvdb";
 import { resolveLibraryPath } from "./library-path";
+import { plexConfigured, resolvePlexConnection } from "./plex-connection";
 import type { MediaItem } from "./types";
 import type { ServerSettings } from "./server-settings";
 import {
@@ -38,8 +39,9 @@ let buildInFlightKey: string | null = null;
 let backgroundSyncStarted = false;
 
 function buildKey(settings: ServerSettings): string {
-  if (settings.plexUrl && settings.plexToken) {
-    return `plex:${settings.plexUrl.replace(/\/$/, "")}:${hashPlexToken(settings.plexToken)}`;
+  const plex = resolvePlexConnection(settings);
+  if (plex.plexUrl && plex.plexToken) {
+    return `plex:${plex.plexUrl}:${hashPlexToken(plex.plexToken)}`;
   }
   return `nfs:${resolveLibraryPath(settings.libraryPath)}`;
 }
@@ -58,25 +60,37 @@ async function buildLibraryCatalogInner(
   let items: MediaItem[] = [];
   let source = "none";
 
+  const cachedCount = previous?.items.length ?? 0;
+
   reportProgress({
     status: "running",
     phase: "starting",
-    message: "Starting library sync…",
+    message: cachedCount
+      ? `Starting library sync (${cachedCount} titles cached)…`
+      : "Starting library sync…",
     current: 0,
     total: 1,
-    itemsLoaded: previous?.items.length ?? 0,
+    itemsLoaded: 0,
     startedAt: new Date().toISOString(),
     finishedAt: undefined,
     error: undefined,
   });
 
-  if (settings.plexUrl && settings.plexToken) {
-    reportProgress({ phase: "fetching", message: "Connecting to Plex…", current: 0, total: 1 });
+  const plex = resolvePlexConnection(settings);
+
+  if (plexConfigured(settings)) {
+    reportProgress({
+      phase: "fetching",
+      message: `Connecting to Plex at ${plex.plexUrl}…`,
+      current: 0,
+      total: 1,
+      itemsLoaded: 0,
+    });
     let plexError: string | undefined;
     try {
       items = await fetchPlexLibrary(
-        settings.plexUrl,
-        settings.plexToken,
+        plex.plexUrl,
+        plex.plexToken,
         (progress: PlexFetchProgress) => {
           reportProgress({
             phase: "fetching",
@@ -91,34 +105,76 @@ async function buildLibraryCatalogInner(
     } catch (err) {
       plexError = err instanceof Error ? err.message : "Plex fetch failed";
       console.warn("[library-sync] Plex unavailable:", plexError);
-      reportProgress({
-        phase: "fetching",
-        message: `Plex unavailable (${plexError}). Scanning local folders…`,
-        current: 0,
-        total: 1,
-      });
-    }
 
-    if (items.length === 0) {
+      if (previous && previous.items.length > 0) {
+        reportProgress({
+          status: "done",
+          phase: "done",
+          message: `Plex unavailable — keeping ${previous.items.length} cached titles. Fix PLEX_URL/token and Save & Sync.`,
+          current: 1,
+          total: 1,
+          itemsLoaded: previous.items.length,
+          finishedAt: new Date().toISOString(),
+          error: plexError,
+        });
+        return previous;
+      }
+
       const libraryPath = resolveLibraryPath(settings.libraryPath);
       if (libraryPath) {
-        items = await scanLibrary(libraryPath);
+        reportProgress({
+          phase: "fetching",
+          message: `Plex unavailable. Scanning ${libraryPath}…`,
+          current: 0,
+          total: 0,
+          itemsLoaded: 0,
+        });
+        items = await scanLibrary(libraryPath, (found, dir) => {
+          reportProgress({
+            phase: "fetching",
+            message: `Scanning ${dir.replace(/^\/media\/?/, "") || "library"}… ${found} files`,
+            current: 0,
+            total: 0,
+            itemsLoaded: found,
+          });
+        });
         source = "nfs";
         reportProgress({
           itemsLoaded: items.length,
           message: `Found ${items.length} files on disk`,
+          current: 1,
+          total: 1,
         });
-      } else if (plexError) {
+      } else {
         throw new Error(plexError);
       }
     }
   } else {
     const libraryPath = resolveLibraryPath(settings.libraryPath);
     if (libraryPath) {
-      reportProgress({ phase: "fetching", message: "Scanning video folder…", current: 0, total: 1 });
-      items = await scanLibrary(libraryPath);
+      reportProgress({
+        phase: "fetching",
+        message: `Scanning ${libraryPath}…`,
+        current: 0,
+        total: 0,
+        itemsLoaded: 0,
+      });
+      items = await scanLibrary(libraryPath, (found, dir) => {
+        reportProgress({
+          phase: "fetching",
+          message: `Scanning ${dir.replace(/^\/media\/?/, "") || "library"}… ${found} files`,
+          current: 0,
+          total: 0,
+          itemsLoaded: found,
+        });
+      });
       source = "nfs";
-      reportProgress({ itemsLoaded: items.length, message: `Found ${items.length} files` });
+      reportProgress({
+        itemsLoaded: items.length,
+        message: `Found ${items.length} files`,
+        current: 1,
+        total: 1,
+      });
     }
   }
 
@@ -178,8 +234,8 @@ async function buildLibraryCatalogInner(
     version: 2,
     cachedAt: new Date().toISOString(),
     source,
-    plexUrl: settings.plexUrl ? settings.plexUrl.replace(/\/$/, "") : "",
-    plexTokenHash: settings.plexToken ? hashPlexToken(settings.plexToken) : "",
+    plexUrl: plex.plexUrl,
+    plexTokenHash: plex.plexToken ? hashPlexToken(plex.plexToken) : "",
     libraryPath: resolveLibraryPath(settings.libraryPath),
     items,
     rows,

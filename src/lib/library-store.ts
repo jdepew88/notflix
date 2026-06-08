@@ -5,6 +5,7 @@ import type { MediaItem } from "./types";
 import type { ServerSettings } from "./server-settings";
 import { getDataPath } from "./data-path";
 import { resolveLibraryPath } from "./library-path";
+import { resolvePlexConnection } from "./plex-connection";
 
 export function hashPlexToken(token: string): string {
   return createHash("sha256").update(token).digest("hex").slice(0, 12);
@@ -96,11 +97,12 @@ export function databaseMatchesSettings(
   db: LibraryDatabase,
   settings: ServerSettings
 ): boolean {
-  if (settings.plexUrl && settings.plexToken) {
+  const plex = resolvePlexConnection(settings);
+  if (plex.plexUrl && plex.plexToken) {
     return (
       db.source === "plex" &&
-      db.plexUrl === normalizePlexUrl(settings.plexUrl) &&
-      db.plexTokenHash === hashPlexToken(settings.plexToken)
+      db.plexUrl === normalizePlexUrl(plex.plexUrl) &&
+      db.plexTokenHash === hashPlexToken(plex.plexToken)
     );
   }
   if (db.source !== "nfs") return false;
@@ -112,8 +114,9 @@ export function databaseCompatibleWithSettings(
   db: LibraryDatabase,
   settings: ServerSettings
 ): boolean {
-  if (settings.plexUrl?.trim()) {
-    return db.source === "plex" && db.plexUrl === normalizePlexUrl(settings.plexUrl);
+  const plex = resolvePlexConnection(settings);
+  if (plex.plexUrl) {
+    return db.source === "plex" && db.plexUrl === normalizePlexUrl(plex.plexUrl);
   }
   const libraryPath = resolveLibraryPath(settings.libraryPath);
   if (libraryPath) {

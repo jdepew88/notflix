@@ -1,27 +1,69 @@
 import { NextRequest, NextResponse } from "next/server";
-import fs from "fs";
-import { mergeSettings } from "@/lib/settings";
+import { mergeSettingsForServerOps } from "@/lib/settings";
 import { fetchPlexLibrary } from "@/lib/plex";
-import { scanLibrary } from "@/lib/library";
 import {
+  CONTAINER_MEDIA_PATH,
   CONTAINER_VIDEO_PATH,
   HOST_MEDIA_PATH,
   libraryPathHint,
   mapHostPathToContainer,
   resolveLibraryPath,
 } from "@/lib/library-path";
-import { listMediaMountSubdirs, suggestLibraryPaths } from "@/lib/library-path-server";
 
-function testLibraryPath(libraryPath: string, rawPath?: string) {
-  if (!libraryPath) {
-    return { ok: false, error: "No library path configured" };
+async function loadFs() {
+  return import("node:fs");
+}
+
+async function scanLibraryAt(targetPath: string) {
+  const { scanLibrary } = await import("@/lib/library");
+  return scanLibrary(targetPath);
+}
+
+async function listMediaMountSubdirs(): Promise<string[]> {
+  try {
+    const fs = await loadFs();
+    if (!fs.existsSync(CONTAINER_MEDIA_PATH)) return [];
+    return fs
+      .readdirSync(CONTAINER_MEDIA_PATH, { withFileTypes: true })
+      .filter((e) => e.isDirectory())
+      .map((e) => `${CONTAINER_MEDIA_PATH}/${e.name}`)
+      .slice(0, 12);
+  } catch {
+    return [];
   }
+}
+
+async function suggestLibraryPaths(): Promise<string[]> {
+  const fs = await loadFs();
+  const candidates = [
+    CONTAINER_VIDEO_PATH,
+    `${CONTAINER_MEDIA_PATH}/Movies`,
+    `${CONTAINER_MEDIA_PATH}/TV`,
+    CONTAINER_MEDIA_PATH,
+  ];
+  return candidates.filter((p) => {
+    try {
+      return fs.existsSync(p);
+    } catch {
+      return false;
+    }
+  });
+}
+
+async function testLibraryPath(libraryPath: string, rawPath?: string) {
+  if (!libraryPath) {
+    return { ok: false as const, error: "No library path configured" };
+  }
+
+  const fs = await loadFs();
   if (!fs.existsSync(libraryPath)) {
     const hint = rawPath ? libraryPathHint(rawPath) : undefined;
-    const suggestions = suggestLibraryPaths();
-    const subdirs = listMediaMountSubdirs();
+    const [suggestions, subdirs] = await Promise.all([
+      suggestLibraryPaths(),
+      listMediaMountSubdirs(),
+    ]);
     return {
-      ok: false,
+      ok: false as const,
       error: `Path does not exist: ${libraryPath}`,
       path: libraryPath,
       hostHint: HOST_MEDIA_PATH,
@@ -31,16 +73,17 @@ function testLibraryPath(libraryPath: string, rawPath?: string) {
       availableSubdirs: subdirs,
     };
   }
+
   const stat = fs.statSync(libraryPath);
   if (!stat.isDirectory()) {
-    return { ok: false, error: "Path is not a directory", path: libraryPath };
+    return { ok: false as const, error: "Path is not a directory", path: libraryPath };
   }
   fs.accessSync(libraryPath, fs.constants.R_OK);
-  return { ok: true, path: libraryPath, readable: true };
+  return { ok: true as const, path: libraryPath, readable: true };
 }
 
 export async function GET(request: NextRequest) {
-  const settings = mergeSettings(request);
+  const settings = mergeSettingsForServerOps(request);
   const action = request.nextUrl.searchParams.get("action") ?? "all";
   const pathOverride = request.nextUrl.searchParams.get("path") ?? undefined;
   const rawLibraryPath = pathOverride || settings.libraryPath?.trim() || "";
@@ -84,7 +127,7 @@ export async function GET(request: NextRequest) {
     }
 
     try {
-      const access = testLibraryPath(targetPath, rawTarget);
+      const access = await testLibraryPath(targetPath, rawTarget);
       if (!access.ok) {
         return NextResponse.json({
           ...access,
@@ -93,7 +136,7 @@ export async function GET(request: NextRequest) {
         });
       }
 
-      const items = await scanLibrary(targetPath);
+      const items = await scanLibraryAt(targetPath);
       return NextResponse.json({
         ok: true,
         message: `Video folder readable — ${items.length} video files at ${targetPath}`,
@@ -130,11 +173,11 @@ export async function GET(request: NextRequest) {
 
   if (libraryPath) {
     try {
-      const access = testLibraryPath(libraryPath, rawLibraryPath);
+      const access = await testLibraryPath(libraryPath, rawLibraryPath);
       if (!access.ok) {
         results.library = access;
       } else {
-        const items = await scanLibrary(libraryPath);
+        const items = await scanLibraryAt(libraryPath);
         results.library = { ok: true, count: items.length, path: libraryPath };
       }
     } catch (err) {
@@ -149,9 +192,9 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const access = testLibraryPath(CONTAINER_VIDEO_PATH);
+    const access = await testLibraryPath(CONTAINER_VIDEO_PATH);
     if (access.ok) {
-      const items = await scanLibrary(CONTAINER_VIDEO_PATH);
+      const items = await scanLibraryAt(CONTAINER_VIDEO_PATH);
       results.videoFolder = {
         ok: true,
         count: items.length,

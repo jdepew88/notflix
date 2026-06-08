@@ -419,7 +419,7 @@ export function BrowseContent() {
                 <h2 className="mb-4 text-2xl font-semibold">Connect your Plex library</h2>
                 <p className="max-w-lg text-netflix-light-gray">
                   Go to Settings and enter your Plex server URL (e.g.{" "}
-                  <code className="text-white">http://192.168.x.x:32400</code>), Plex token, and TVDB
+                  <code className="text-white">http://172.16.x.x:32400</code>), Plex token, and TVDB
                   API key. Click <strong className="text-white">Save & Sync Library</strong>, then
                   refresh this page.
                 </p>

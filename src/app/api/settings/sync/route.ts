@@ -4,9 +4,11 @@ import { testTvdbConnection } from "@/lib/tvdb";
 import {
   applySettingsCookies,
   mergeSettings,
+  mergeSettingsForServerOps,
   mergeSettingsFromBody,
   saveServerSettings,
 } from "@/lib/settings";
+import { isPlexUrlPinnedFromEnv, withResolvedPlex } from "@/lib/plex-connection";
 import { toClientSettings } from "@/lib/server-settings";
 import { deleteLibraryCache } from "@/lib/library-cache";
 import { startBackgroundLibrarySync } from "@/lib/library-sync";
@@ -38,23 +40,24 @@ export async function POST(request: NextRequest) {
       deleteLibraryCache();
     }
 
-    saveServerSettings(merged);
+    saveServerSettings(withResolvedPlex(merged));
 
     if (
       (plexTokenChanged || plexUrlChanged || libraryPathChanged) &&
       merged.plexUrl &&
       merged.plexToken
     ) {
-      void startBackgroundLibrarySync(merged, {
+      void startBackgroundLibrarySync(withResolvedPlex(merged), {
         forceRefresh: plexUrlChanged || libraryPathChanged,
       });
     }
 
+    const resolved = withResolvedPlex(merged);
     const response = NextResponse.json({
       success: true,
-      settings: toClientSettings(merged),
+      settings: toClientSettings(resolved),
     });
-    applySettingsCookies(response, merged);
+    applySettingsCookies(response, resolved);
     return response;
   } catch (err) {
     const message = err instanceof Error ? err.message : "Sync failed";
@@ -68,11 +71,18 @@ export async function GET(request: NextRequest) {
   const config = request.nextUrl.searchParams.get("config");
 
   if (test === "plex") {
-    if (!settings.plexUrl || !settings.plexToken) {
+    const serverSettings = mergeSettingsForServerOps(request);
+    if (!serverSettings.plexUrl || !serverSettings.plexToken) {
       return NextResponse.json({ ok: false, error: "Plex URL and token required" }, { status: 400 });
     }
-    const result = await testPlexConnection(settings.plexUrl, settings.plexToken);
-    return NextResponse.json(result);
+    const result = await testPlexConnection(
+      serverSettings.plexUrl,
+      serverSettings.plexToken
+    );
+    return NextResponse.json({
+      ...result,
+      plexUrl: serverSettings.plexUrl,
+    });
   }
 
   if (test === "tvdb") {
@@ -84,17 +94,19 @@ export async function GET(request: NextRequest) {
   }
 
   if (config === "1") {
+    const resolved = withResolvedPlex(mergeSettingsForServerOps(request));
     const response = NextResponse.json({
-      settings: toClientSettings(settings),
+      settings: toClientSettings(resolved),
+      plexUrlPinned: isPlexUrlPinnedFromEnv(),
       configured: {
-        plex: !!(settings.plexUrl && settings.plexToken),
-        nfs: !!settings.libraryPath,
-        tmdb: !!settings.tmdbApiKey,
-        tvdb: !!settings.tvdbApiKey,
-        debrid: !!settings.realDebridToken,
+        plex: !!(resolved.plexUrl && resolved.plexToken),
+        nfs: !!resolved.libraryPath,
+        tmdb: !!resolved.tmdbApiKey,
+        tvdb: !!resolved.tvdbApiKey,
+        debrid: !!resolved.realDebridToken,
       },
     });
-    applySettingsCookies(response, settings);
+    applySettingsCookies(response, resolved);
     return response;
   }
 

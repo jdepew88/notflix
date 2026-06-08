@@ -11,6 +11,7 @@ import {
   type ServerSettings,
 } from "./server-settings";
 import { mapHostPathToContainer } from "./library-path";
+import { withResolvedPlex } from "./plex-connection";
 
 export type { ServerSettings as ResolvedSettings };
 
@@ -43,18 +44,19 @@ export function mergeSettingsForServerOps(request: NextRequest): ServerSettings 
     settingsFromHeaders(request)
   );
 
-  return {
+  const merged: ServerSettings = {
     realDebridToken: base.realDebridToken || client.realDebridToken,
     tmdbApiKey: base.tmdbApiKey || client.tmdbApiKey,
     tvdbApiKey: base.tvdbApiKey || client.tvdbApiKey,
     libraryPath: base.libraryPath || client.libraryPath,
     plexUrl: base.plexUrl || client.plexUrl,
-    plexToken: base.plexToken || client.plexToken,
+    plexToken: client.plexToken || base.plexToken,
     torrentioUrl: base.torrentioUrl || client.torrentioUrl,
     peerflixUrl: base.peerflixUrl || client.peerflixUrl,
     directPlay: client.directPlay ?? base.directPlay,
     plexOnly: client.plexOnly ?? base.plexOnly,
   };
+  return withResolvedPlex(merged);
 }
 
 export function mergeSettingsFromBody(

@@ -1,6 +1,7 @@
 import type { MediaItem } from "./types";
 import type { ServerSettings } from "./server-settings";
 import { resolveLibraryPath } from "./library-path";
+import { resolvePlexConnection } from "./plex-connection";
 import {
   readLibraryDatabase,
   writeLibraryDatabase,
@@ -61,11 +62,12 @@ export function cacheMatchesSettings(
   cache: LibraryCacheData,
   settings: ServerSettings
 ): boolean {
-  if (settings.plexUrl && settings.plexToken) {
+  const plex = resolvePlexConnection(settings);
+  if (plex.plexUrl && plex.plexToken) {
     return (
       cache.source === "plex" &&
-      cache.plexUrl === normalizePlexUrl(settings.plexUrl) &&
-      cache.plexTokenHash === hashPlexToken(settings.plexToken)
+      cache.plexUrl === normalizePlexUrl(plex.plexUrl) &&
+      cache.plexTokenHash === hashPlexToken(plex.plexToken)
     );
   }
   if (cache.source !== "nfs") return false;

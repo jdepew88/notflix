@@ -11,9 +11,8 @@ services:
       NODE_ENV: production
       PORT: 3000
       HOSTNAME: 0.0.0.0
-      PLEX_URL: http://10.10.0.8:32800
-      # Set PLEX_TOKEN in .env (required for Plex sync when not using Settings sign-in)
-      LIBRARY_PATH: /media
+      # PLEX_URL + PLEX_TOKEN: set in .env (use your LAN IP, e.g. http://172.16.x.x:32400)
+      LIBRARY_PATH: /media/Video
       DATA_PATH: /app/data
     volumes:
       - /mnt/user/Media:/media:ro
