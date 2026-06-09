@@ -156,10 +156,11 @@ export default function TitleDetailPage() {
                   poster={poster}
                   tmdbId={item.tmdbId}
                   seriesId={watchIdForItem(item)}
-                  onSelect={(season, episode) => {
+                  onSelect={(season, episode, episodeWatchId) => {
                     router.push(
                       watchHrefForEpisode({
                         watchId: watchIdForItem(item),
+                        episodeWatchId: episodeWatchId,
                         tmdbId: item.tmdbId,
                         title: item.title,
                         season,

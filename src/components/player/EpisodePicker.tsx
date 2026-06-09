@@ -11,7 +11,7 @@ interface EpisodePickerProps {
   seriesId?: string;
   currentSeason?: number;
   currentEpisode?: number;
-  onSelect: (season: number, episode: number) => void;
+  onSelect: (season: number, episode: number, watchId?: string) => void;
   onCancel: () => void;
   overlay?: boolean;
 }

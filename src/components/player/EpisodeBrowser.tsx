@@ -15,7 +15,7 @@ interface EpisodeBrowserProps {
   seriesId?: string;
   currentSeason?: number;
   currentEpisode?: number;
-  onSelect: (season: number, episode: number) => void;
+  onSelect: (season: number, episode: number, watchId?: string) => void;
   layout?: "fullscreen" | "embedded";
   className?: string;
 }
@@ -181,7 +181,13 @@ export function EpisodeBrowser({
                     type="button"
                     onMouseEnter={() => setFocusedEpisode(ep)}
                     onFocus={() => setFocusedEpisode(ep)}
-                    onClick={() => onSelect(ep.season, ep.episode)}
+                    onClick={() =>
+                      onSelect(
+                        ep.season,
+                        ep.episode,
+                        ep.inLibrary ? ep.watchId : undefined
+                      )
+                    }
                     className={cn(
                       "group flex w-full items-start gap-4 rounded-lg border px-4 py-3 text-left transition",
                       isCurrent

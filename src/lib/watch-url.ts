@@ -38,6 +38,7 @@ export function watchHrefForItem(item: MediaItem): string {
 
 export function watchHrefForEpisode(opts: {
   watchId: string;
+  episodeWatchId?: string;
   tmdbId?: number;
   title?: string;
   season: number;
@@ -49,5 +50,6 @@ export function watchHrefForEpisode(opts: {
   params.set("episode", String(opts.episode));
   if (opts.tmdbId) params.set("tmdbId", String(opts.tmdbId));
   if (opts.title) params.set("title", opts.title);
-  return `/watch/${encodeURIComponent(opts.watchId)}?${params.toString()}`;
+  const targetId = opts.episodeWatchId ?? opts.watchId;
+  return `/watch/${encodeURIComponent(targetId)}?${params.toString()}`;
 }

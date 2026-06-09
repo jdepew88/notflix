@@ -34,12 +34,16 @@ function buildPlayQuery(opts: {
   type: "movie" | "series";
   season?: number;
   episode?: number;
+  seriesId?: string;
+  title?: string;
 }): string {
   const params = new URLSearchParams();
   params.set("tmdbId", String(opts.tmdbId));
   params.set("type", opts.type);
   if (opts.season != null) params.set("season", String(opts.season));
   if (opts.episode != null) params.set("episode", String(opts.episode));
+  if (opts.seriesId) params.set("seriesId", opts.seriesId);
+  if (opts.title) params.set("title", opts.title);
   return params.toString();
 }
 
@@ -484,7 +488,12 @@ export default function WatchPage() {
         });
       }
 
-      async function startPlexPlayback(ratingKey: string, fallbackItem?: MediaItem) {
+      async function startPlexPlayback(
+        ratingKey: string,
+        fallbackItem?: MediaItem,
+        season?: number,
+        episode?: number
+      ) {
         if (!settings.plexUrl || !settings.plexToken) {
           if (fallbackItem?.filePath) {
             await startLibraryFilePlayback(fallbackItem);
@@ -496,7 +505,14 @@ export default function WatchPage() {
         setPlexRatingKey(ratingKey);
         try {
           await ensurePlexCookies(settings);
-          const playUrl = `/api/plex/play?ratingKey=${encodeURIComponent(ratingKey)}&mode=${plexMode}&plexUrl=${encodeURIComponent(settings.plexUrl)}`;
+          const playParams = new URLSearchParams({
+            ratingKey,
+            mode: plexMode,
+            plexUrl: settings.plexUrl,
+          });
+          if (season != null) playParams.set("season", String(season));
+          if (episode != null) playParams.set("episode", String(episode));
+          const playUrl = `/api/plex/play?${playParams.toString()}`;
           const playRes = await fetchWithSettings(playUrl, settings);
           const playData = await playRes.json();
           if (!playRes.ok) {
@@ -561,6 +577,61 @@ export default function WatchPage() {
         return;
       }
 
+      if (id.startsWith("plex-")) {
+        const ratingKey = id.replace("plex-", "");
+        let found: MediaItem | undefined;
+        let episodeItem: MediaItem | undefined;
+
+        const libraryRes = await fetchWithSettings("/api/library", settings);
+        const libData = libraryRes.ok ? await libraryRes.json() : { items: [] };
+        const items = (libData.items ?? []) as MediaItem[];
+        found = items.find((i) => i.id === id);
+
+        if (seasonEpisodeReady && found?.type === "series") {
+          episodeItem = items.find(
+            (i) =>
+              i.type === "episode" &&
+              i.season === seasonNum &&
+              i.episode === episodeNum &&
+              (i.seriesId === id || i.seriesId === found?.id)
+          );
+        }
+
+        const playTarget =
+          episodeItem ?? (found?.type === "episode" ? found : undefined);
+        const canPlayDirect =
+          playTarget != null || (found != null && !seasonEpisodeReady);
+
+        if (canPlayDirect) {
+          const target = playTarget ?? found!;
+          try {
+            setItem(target);
+            const playKey = target.plexRatingKey ?? ratingKey;
+            await startPlexPlayback(
+              playKey,
+              target,
+              seasonNum,
+              episodeNum
+            );
+            return;
+          } catch (err) {
+            if (target.filePath) {
+              try {
+                await startLibraryFilePlayback(target);
+                return;
+              } catch {
+                /* fall through to torrent search */
+              }
+            } else if (!settings.plexOnly && tmdbIdFromWatch && seasonEpisodeReady) {
+              /* fall through to torrent search */
+            } else {
+              setError(err instanceof Error ? err.message : "Plex playback failed");
+              return;
+            }
+          }
+        }
+      }
+
       if (
         tmdbIdFromWatch &&
         (mediaType !== "series" || seasonEpisodeReady)
@@ -572,7 +643,17 @@ export default function WatchPage() {
 
         try {
           setResolveStatus("Checking Plex library…");
-          const query = buildPlayQuery({ tmdbId, type, season, episode });
+          const query = buildPlayQuery({
+            tmdbId,
+            type,
+            season,
+            episode,
+            seriesId: lookupId,
+            title:
+              searchParams.get("title") ??
+              episodePickerShow?.title ??
+              item?.title,
+          });
           const streamsRes = await fetchWithSettings(`/api/play/streams?${query}`, settings);
           const sources = await streamsRes.json();
 
@@ -596,7 +677,7 @@ export default function WatchPage() {
               sources.plexRatingKey ??
               sources.watchId?.replace("plex-", "");
             if (rk) {
-              await startPlexPlayback(rk, sources.item);
+              await startPlexPlayback(rk, sources.item, season, episode);
               return;
             }
             if (sources.item.filePath) {
@@ -613,45 +694,13 @@ export default function WatchPage() {
             return;
           }
 
-          throw new Error("No playable stream found");
+          throw new Error(sources.message || "No playable stream found");
         } catch (err) {
           setError(err instanceof Error ? err.message : "Playback failed");
         } finally {
           setResolveStatus("");
         }
         return;
-      }
-
-      if (id.startsWith("plex-")) {
-        const ratingKey = id.replace("plex-", "");
-        let found: MediaItem | undefined;
-        try {
-          const libraryRes = await fetchWithSettings("/api/library", settings);
-          const libData = libraryRes.ok ? await libraryRes.json() : { items: [] };
-          found = (libData.items ?? []).find((i: MediaItem) => i.id === id);
-          setItem(
-            found ?? {
-              id,
-              title: "Plex Video",
-              type: "movie",
-              source: "library",
-            }
-          );
-          await startPlexPlayback(ratingKey, found);
-          return;
-        } catch (err) {
-          if (found?.filePath) {
-            try {
-              setItem(found);
-              await startLibraryFilePlayback(found);
-              return;
-            } catch {
-              /* fall through */
-            }
-          }
-          setError(err instanceof Error ? err.message : "Plex playback failed");
-          return;
-        }
       }
 
       const libraryRes = await fetchWithSettings("/api/library", settings);
@@ -678,7 +727,7 @@ export default function WatchPage() {
             const rk =
               episodeItem.plexRatingKey ?? episodeItem.id.replace("plex-", "");
             if (rk) {
-              await startPlexPlayback(rk, episodeItem);
+              await startPlexPlayback(rk, episodeItem, seasonNum, episodeNum);
               return;
             }
           }
@@ -716,7 +765,7 @@ export default function WatchPage() {
           if (found.plexRatingKey || found.id.startsWith("plex-")) {
             const rk = found.plexRatingKey ?? found.id.replace("plex-", "");
             try {
-              await startPlexPlayback(rk, found);
+              await startPlexPlayback(rk, found, seasonNum, episodeNum);
               return;
             } catch (err) {
               if (found.filePath) {
@@ -807,7 +856,7 @@ export default function WatchPage() {
   ]);
 
   const navigateToEpisode = useCallback(
-    (season: number, episode: number) => {
+    (season: number, episode: number, watchId?: string) => {
       const params = new URLSearchParams(searchParams.toString());
       params.set("type", "series");
       params.set("season", String(season));
@@ -819,7 +868,8 @@ export default function WatchPage() {
       setEpisodePickerShow(null);
       setForceTranscode(false);
       setError("");
-      router.replace(`/watch/${encodeURIComponent(id)}?${params.toString()}`);
+      const targetId = watchId ?? id;
+      router.replace(`/watch/${encodeURIComponent(targetId)}?${params.toString()}`);
     },
     [
       searchParams,
@@ -832,8 +882,8 @@ export default function WatchPage() {
   );
 
   const handleEpisodeSelect = useCallback(
-    (season: number, episode: number) => {
-      navigateToEpisode(season, episode);
+    (season: number, episode: number, watchId?: string) => {
+      navigateToEpisode(season, episode, watchId);
     },
     [navigateToEpisode]
   );

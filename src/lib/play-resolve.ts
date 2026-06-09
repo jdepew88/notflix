@@ -1,5 +1,5 @@
 import { fetchPlexLibrary } from "./plex";
-import { findInPlexLibrary } from "./plex-match";
+import { findInPlexLibrary, isEpisodePlaybackMatch } from "./plex-match";
 import { plexDirectStreamUrl } from "./plex-stream";
 import { readLibraryDatabase } from "./library-store";
 import { itemWithMappedPath, libraryStreamUrl } from "./library-playback";
@@ -29,6 +29,7 @@ export interface PlayResolveRequest {
   episode?: number;
   title?: string;
   year?: number;
+  seriesId?: string;
   plexUrl?: string;
   plexToken?: string;
   torrentioUrl?: string;
@@ -153,10 +154,11 @@ function tryLibraryDbMatch(request: PlayResolveRequest): PlayResolveResult | nul
     const episode = findLibraryEpisode(db.items, {
       tmdbId: request.tmdbId,
       title: request.title,
+      seriesId: request.seriesId,
       season: request.season,
       episode: request.episode,
     });
-    if (episode) {
+    if (episode && isEpisodePlaybackMatch(episode, request)) {
       return libraryMatchResult(
         episode,
         "Playing episode from saved library (local file or Plex metadata)"
@@ -172,14 +174,15 @@ function tryLibraryDbMatch(request: PlayResolveRequest): PlayResolveResult | nul
     type: request.type,
     season: request.season,
     episode: request.episode,
+    seriesId: request.seriesId,
   });
-  if (!match) return null;
+  if (!match || !isEpisodePlaybackMatch(match, request)) return null;
 
   return libraryMatchResult(match, "Playing from saved library (local file or Plex metadata)");
 }
 
 async function tryPlexMatch(request: PlayResolveRequest): Promise<PlayResolveResult | null> {
-  const { tmdbId, title, year, type, plexUrl, plexToken } = request;
+  const { tmdbId, title, year, type, plexUrl, plexToken, seriesId } = request;
   if (!plexUrl || !plexToken) return null;
 
   try {
@@ -191,8 +194,9 @@ async function tryPlexMatch(request: PlayResolveRequest): Promise<PlayResolveRes
       type,
       season: request.season,
       episode: request.episode,
+      seriesId,
     });
-    if (!match) return null;
+    if (!match || !isEpisodePlaybackMatch(match, request)) return null;
 
     const item = itemWithMappedPath(match);
     const streamUrl =
@@ -257,17 +261,6 @@ async function fetchSortedTorrentStreams(request: PlayResolveRequest) {
 export async function listPlaybackSources(
   request: PlayResolveRequest
 ): Promise<ListPlaybackSourcesResult> {
-  const plex = await tryPlexMatch(request);
-  if (plex?.item) {
-    return {
-      source: plex.source === "library" ? "library" : "plex",
-      item: plex.item,
-      watchId: plex.watchId,
-      plexRatingKey: plex.item.plexRatingKey ?? plex.watchId?.replace("plex-", ""),
-      message: plex.message,
-    };
-  }
-
   const cached = tryLibraryDbMatch(request);
   if (cached?.item) {
     return {
@@ -276,6 +269,17 @@ export async function listPlaybackSources(
       watchId: cached.watchId,
       plexRatingKey: cached.item.plexRatingKey ?? cached.watchId?.replace("plex-", ""),
       message: cached.message,
+    };
+  }
+
+  const plex = await tryPlexMatch(request);
+  if (plex?.item) {
+    return {
+      source: plex.source === "library" ? "library" : "plex",
+      item: plex.item,
+      watchId: plex.watchId,
+      plexRatingKey: plex.item.plexRatingKey ?? plex.watchId?.replace("plex-", ""),
+      message: plex.message,
     };
   }
 
@@ -352,11 +356,11 @@ export async function openTorrentioStreamByIndex(
 export async function resolvePlayback(
   request: PlayResolveRequest
 ): Promise<PlayResolveResult> {
-  const plex = await tryPlexMatch(request);
-  if (plex) return plex;
-
   const cached = tryLibraryDbMatch(request);
   if (cached) return cached;
+
+  const plex = await tryPlexMatch(request);
+  if (plex) return plex;
 
   if (request.plexOnly) {
     return {
@@ -404,5 +408,6 @@ export function parsePlayResolveParams(params: URLSearchParams): PlayResolveRequ
     episode: params.get("episode") ? parseInt(params.get("episode")!, 10) : undefined,
     title: params.get("title") ?? undefined,
     year: params.get("year") ? parseInt(params.get("year")!, 10) : undefined,
+    seriesId: params.get("seriesId") ?? undefined,
   };
 }

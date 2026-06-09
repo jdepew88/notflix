@@ -115,11 +115,12 @@ export function DetailModal() {
   const resumeLabel = playLabelForItem(display);
   const matchLabel = formatMatchScore(display.rating);
 
-  const playEpisode = (season: number, episode: number) => {
+  const playEpisode = (season: number, episode: number, episodeWatchId?: string) => {
     closeDetail();
     router.push(
       watchHrefForEpisode({
         watchId: watchIdForItem(display),
+        episodeWatchId: episodeWatchId,
         tmdbId: display.tmdbId,
         title: display.title,
         season,
