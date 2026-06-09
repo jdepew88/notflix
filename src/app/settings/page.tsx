@@ -146,8 +146,11 @@ export default function SettingsPage() {
       }
       setSaved(true);
       if (libData?.count) {
+        const episodes = (libData.items ?? []).filter(
+          (i: { type?: string }) => i.type === "episode"
+        ).length;
         setSyncResult(
-          `Synced! Saved ${libData.count} titles from ${libData.source} to the library database.`
+          `Synced! Saved ${libData.count} titles from ${libData.source} (${episodes} episodes).`
         );
       } else if (libData?.message) {
         setSyncResult(libData.message);
@@ -417,14 +420,38 @@ export default function SettingsPage() {
     };
   }, [form.plexToken, form.plexUrl]);
 
-  const forceRefreshPlex = async () => {
+  const runLibraryResync = async (full: boolean) => {
     setRefreshing(true);
     setRefreshResult("");
+    setSyncProgress(null);
     try {
-      const res = await fetchWithSettings("/api/library/refresh", form, { method: "POST" });
+      const url = full
+        ? "/api/library/refresh?full=1&wait=1"
+        : "/api/library/refresh?wait=1";
+      const res = await fetchWithSettings(url, form, { method: "POST" });
       const data = await res.json();
+      if (data.sync) setSyncProgress(data.sync);
+
+      if (data.running) {
+        await pollLibrarySyncUntilDone();
+        const libRes = await fetchWithSettings("/api/library", form);
+        const libData = libRes.ok ? await libRes.json() : null;
+        const episodes = (libData?.items ?? []).filter(
+          (i: { type?: string }) => i.type === "episode"
+        ).length;
+        setRefreshResult(
+          libData?.count
+            ? `Synced ${libData.count} titles (${episodes} episodes).`
+            : data.message ?? "Sync finished."
+        );
+        return;
+      }
+
       if (data.success) {
-        setRefreshResult(data.message ?? `Refreshed ${data.titleCount} titles`);
+        setRefreshResult(
+          data.message ??
+            `Synced ${data.titleCount ?? 0} titles (${data.episodeCount ?? 0} episodes).`
+        );
       } else {
         setRefreshResult(data.error ?? "Refresh failed");
       }
@@ -512,12 +539,21 @@ export default function SettingsPage() {
             </button>
             <button
               type="button"
-              onClick={forceRefreshPlex}
+              onClick={() => void runLibraryResync(false)}
               disabled={refreshing || !form.plexUrl || !form.plexToken}
               className="flex items-center gap-2 rounded border border-white/30 px-4 py-2 text-sm hover:bg-white/10 disabled:opacity-40"
             >
               <RefreshCw className={cn("h-4 w-4", refreshing && "animate-spin")} />
-              Force refresh Plex
+              Resync library
+            </button>
+            <button
+              type="button"
+              onClick={() => void runLibraryResync(true)}
+              disabled={refreshing || !form.plexUrl || !form.plexToken}
+              className="flex items-center gap-2 rounded border border-netflix-red/60 px-4 py-2 text-sm hover:bg-netflix-red/20 disabled:opacity-40"
+            >
+              <RefreshCw className={cn("h-4 w-4", refreshing && "animate-spin")} />
+              Full resync (shows + episodes)
             </button>
           </div>
           {plexServer && plexStatus === "ok" && (
@@ -751,8 +787,10 @@ export default function SettingsPage() {
         <section className="rounded bg-netflix-dark p-6">
           <h2 className="mb-4 text-xl font-semibold">Library sync</h2>
           <p className="mb-4 text-sm text-netflix-light-gray">
-            Plex library sync runs in the background. If Plex is unreachable, Notflix falls back to
-            scanning your mounted video folder. Progress appears below while syncing.
+            TV episode lists need a full Plex sync that imports every episode (not just show posters).
+            Use <strong className="text-white">Save &amp; Sync Library</strong> or{" "}
+            <strong className="text-white">Full resync (shows + episodes)</strong> in Diagnostics after
+            adding shows in Plex. A TMDB API key adds episode synopses and artwork on top of Plex data.
           </p>
           <LibrarySyncBar sync={syncProgress} className="rounded border border-white/10" />
         </section>

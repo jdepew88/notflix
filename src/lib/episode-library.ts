@@ -1,5 +1,6 @@
 import type { MediaItem } from "./types";
 import { normalizeTitle } from "./plex-match";
+import type { TvdbEpisodeRecord } from "./tvdb";
 
 export interface EpisodeListEntry {
   season: number;
@@ -20,8 +21,8 @@ export interface SeasonGroup {
 }
 
 function sameShow(item: MediaItem, show: { tmdbId?: number; title?: string; id?: string }): boolean {
+  if (show.id && (item.seriesId === show.id || item.id === show.id)) return true;
   if (show.tmdbId && item.tmdbId === show.tmdbId) return true;
-  if (show.id && item.seriesId === show.id) return true;
   if (show.title && normalizeTitle(item.title) === normalizeTitle(show.title)) return true;
   return false;
 }
@@ -45,7 +46,7 @@ export function groupLibraryEpisodesBySeason(episodes: MediaItem[]): SeasonGroup
     const entry: EpisodeListEntry = {
       season: item.season,
       episode: item.episode,
-      title: `Episode ${item.episode}`,
+      title: item.episodeTitle || `Episode ${item.episode}`,
       overview: item.overview,
       stillPath: item.posterPath,
       runtime: item.runtime,
@@ -64,6 +65,67 @@ export function groupLibraryEpisodesBySeason(episodes: MediaItem[]): SeasonGroup
     .map(([season, eps]) => ({
       season,
       episodes: eps.sort((a, b) => a.episode - b.episode),
+    }));
+}
+
+export function groupTvdbEpisodesBySeason(episodes: TvdbEpisodeRecord[]): SeasonGroup[] {
+  const map = new Map<number, EpisodeListEntry[]>();
+
+  for (const ep of episodes) {
+    if (ep.seasonNumber < 1) continue;
+    const entry: EpisodeListEntry = {
+      season: ep.seasonNumber,
+      episode: ep.number,
+      title: ep.name || `Episode ${ep.number}`,
+      overview: ep.overview,
+      stillPath: ep.image,
+      runtime: ep.runtime,
+      airDate: ep.aired,
+      inLibrary: false,
+    };
+    const list = map.get(ep.seasonNumber) ?? [];
+    list.push(entry);
+    map.set(ep.seasonNumber, list);
+  }
+
+  return [...map.entries()]
+    .sort(([a], [b]) => a - b)
+    .map(([season, eps]) => ({
+      season,
+      episodes: eps.sort((a, b) => a.episode - b.episode),
+    }));
+}
+
+/** Adds episodes from `fill` only where `primary` has no entry for that season/episode. */
+export function mergeFillGapSeasons(
+  primary: SeasonGroup[],
+  fill: SeasonGroup[]
+): SeasonGroup[] {
+  const map = new Map<number, Map<number, EpisodeListEntry>>();
+
+  for (const group of primary) {
+    const epMap = map.get(group.season) ?? new Map();
+    for (const ep of group.episodes) {
+      epMap.set(ep.episode, ep);
+    }
+    map.set(group.season, epMap);
+  }
+
+  for (const group of fill) {
+    const epMap = map.get(group.season) ?? new Map();
+    for (const ep of group.episodes) {
+      if (!epMap.has(ep.episode)) {
+        epMap.set(ep.episode, ep);
+      }
+    }
+    map.set(group.season, epMap);
+  }
+
+  return [...map.entries()]
+    .sort(([a], [b]) => a - b)
+    .map(([season, epMap]) => ({
+      season,
+      episodes: [...epMap.values()].sort((a, b) => a.episode - b.episode),
     }));
 }
 

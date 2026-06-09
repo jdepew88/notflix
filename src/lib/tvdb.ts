@@ -47,6 +47,11 @@ interface TvdbSearchResult {
   }>;
 }
 
+interface TvdbRemoteId {
+  id: string;
+  sourceName?: string;
+}
+
 interface TvdbSeriesExtended {
   data: {
     name: string;
@@ -55,7 +60,46 @@ interface TvdbSeriesExtended {
     artworks?: Array<{ type: number; image: string }>;
     genres?: Array<{ name: string }>;
     status?: { name: string };
+    remoteIds?: TvdbRemoteId[];
   };
+}
+
+interface TvdbEpisodesResponse {
+  data: {
+    episodes: Array<{
+      seasonNumber: number;
+      number: number;
+      name: string;
+      overview?: string;
+      image?: string;
+      runtime?: number | null;
+      aired?: string;
+    }>;
+  };
+  status: string;
+}
+
+export interface TvdbEpisodeRecord {
+  seasonNumber: number;
+  number: number;
+  name: string;
+  overview?: string;
+  image?: string;
+  runtime?: number;
+  aired?: string;
+}
+
+export function parseTmdbIdFromTvdbRemoteIds(
+  remoteIds?: TvdbRemoteId[]
+): number | undefined {
+  if (!remoteIds?.length) return undefined;
+  const match = remoteIds.find((r) => {
+    const source = r.sourceName?.toLowerCase() ?? "";
+    return source.includes("themoviedb") || source === "tmdb";
+  });
+  if (!match) return undefined;
+  const id = parseInt(match.id, 10);
+  return Number.isFinite(id) ? id : undefined;
 }
 
 interface TvdbMovieExtended {
@@ -90,6 +134,39 @@ export async function getTvdbSeries(apiKey: string, id: number) {
   return tvdbFetch<TvdbSeriesExtended>(`/series/${id}/extended`, apiKey);
 }
 
+export async function getTvdbSeriesEpisodes(
+  apiKey: string,
+  seriesId: number,
+  seasonType = "default"
+): Promise<TvdbEpisodeRecord[]> {
+  const all: TvdbEpisodeRecord[] = [];
+  let page = 0;
+
+  while (page < 100) {
+    const data = await tvdbFetch<TvdbEpisodesResponse>(
+      `/series/${seriesId}/episodes/${seasonType}?page=${page}`,
+      apiKey
+    );
+    const episodes = data.data?.episodes ?? [];
+    if (episodes.length === 0) break;
+
+    for (const ep of episodes) {
+      all.push({
+        seasonNumber: ep.seasonNumber,
+        number: ep.number,
+        name: ep.name,
+        overview: ep.overview,
+        image: ep.image,
+        runtime: ep.runtime ?? undefined,
+        aired: ep.aired,
+      });
+    }
+    page++;
+  }
+
+  return all;
+}
+
 export async function getTvdbMovie(apiKey: string, id: number) {
   return tvdbFetch<TvdbMovieExtended>(`/movies/${id}/extended`, apiKey);
 }
@@ -112,8 +189,12 @@ export async function enrichWithTvdb(
           if (item.type === "series" || item.type === "episode") {
             const data = await getTvdbSeries(apiKey, item.tvdbId);
             const art = pickArtwork(data.data.artworks);
+            const tmdbId =
+              item.tmdbId ?? parseTmdbIdFromTvdbRemoteIds(data.data.remoteIds);
             return {
               ...item,
+              tmdbId,
+              mediaType: tmdbId ? "tv" : item.mediaType,
               title: data.data.name || item.title,
               overview: data.data.overview || item.overview,
               posterPath: item.posterPath || art.poster || data.data.image,

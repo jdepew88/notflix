@@ -205,10 +205,14 @@ async function buildLibraryCatalogInner(
       itemsLoaded: items.length,
     });
     items = await enrichWithTvdb(items, settings.tvdbApiKey);
-  } else if (settings.tmdbApiKey && items.length > 0) {
+  }
+
+  if (settings.tmdbApiKey && items.length > 0) {
     reportProgress({
       phase: "enriching",
-      message: "Enriching metadata from TMDB…",
+      message: settings.tvdbApiKey
+        ? "Enriching metadata from TMDB (TVDB + TMDB)…"
+        : "Enriching metadata from TMDB…",
       current: 0,
       total: 1,
       itemsLoaded: items.length,
@@ -253,10 +257,19 @@ async function buildLibraryCatalogInner(
 
   writeLibraryDatabase(db);
 
+  const episodeCount = items.filter((i) => i.type === "episode").length;
+  const showCount = items.filter((i) => i.type === "series").length;
+  const movieCount = items.filter((i) => i.type === "movie").length;
+  const countParts = [
+    movieCount ? `${movieCount} movies` : "",
+    showCount ? `${showCount} shows` : "",
+    episodeCount ? `${episodeCount} episodes` : "",
+  ].filter(Boolean);
+
   reportProgress({
     status: "done",
     phase: "done",
-    message: `Synced ${items.length} titles from ${source}`,
+    message: `Synced ${items.length} titles from ${source}${countParts.length ? ` (${countParts.join(", ")})` : ""}`,
     current: 1,
     total: 1,
     itemsLoaded: items.length,

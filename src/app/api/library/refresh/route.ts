@@ -8,10 +8,12 @@ import {
   buildLibraryCatalog,
 } from "@/lib/library-sync";
 import { readLibrarySyncState, syncProgressPercent } from "@/lib/library-sync-state";
-import { readLibraryDatabase } from "@/lib/library-store";
+import { deleteLibraryDatabase, readLibraryDatabase } from "@/lib/library-store";
 
 export async function POST(request: NextRequest) {
   const settings = mergeSettingsForServerOps(request);
+  const full = request.nextUrl.searchParams.get("full") === "1";
+  const wait = request.nextUrl.searchParams.get("wait") === "1";
 
   try {
     if (settings.plexUrl && settings.plexToken) {
@@ -25,9 +27,28 @@ export async function POST(request: NextRequest) {
         });
       }
 
+      if (full) {
+        deleteLibraryDatabase();
+      }
+
       void refreshPlexLibraries(settings.plexUrl, settings.plexToken).catch((err) => {
         console.warn("[library/refresh] Plex section refresh failed:", err);
       });
+
+      if (wait) {
+        const cache = await buildLibraryCatalog(settings, { forceRefresh: true });
+        const episodeCount = cache.items.filter((i) => i.type === "episode").length;
+        const state = readLibrarySyncState();
+        return NextResponse.json({
+          success: true,
+          running: false,
+          full,
+          titleCount: cache.items.length,
+          episodeCount,
+          message: `Synced ${cache.items.length} titles (${episodeCount} episodes) from Plex.`,
+          sync: { ...state, percent: 100 },
+        });
+      }
 
       void startBackgroundLibrarySync(settings, { forceRefresh: true });
 
@@ -35,8 +56,11 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({
         success: true,
         running: true,
+        full,
         titleCount: db?.items.length ?? 0,
-        message: "Library sync started — watch the progress bar on Browse.",
+        message: full
+          ? "Full library resync started — importing shows and all episodes."
+          : "Library sync started — watch the progress bar on Browse.",
         sync: {
           ...readLibrarySyncState(),
           percent: syncProgressPercent(readLibrarySyncState()),

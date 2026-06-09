@@ -39,6 +39,8 @@ export interface MediaItem {
   filePath?: string;
   season?: number;
   episode?: number;
+  /** Episode name when `title` holds the series name (Plex episodes). */
+  episodeTitle?: string;
   seriesId?: string;
   debridId?: string;
   progress?: number;

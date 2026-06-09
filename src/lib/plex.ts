@@ -28,6 +28,7 @@ interface PlexMetadata {
   guid?: string;
   addedAt?: number;
   parentRatingKey?: string;
+  grandparentRatingKey?: string;
   grandparentTitle?: string;
   parentIndex?: number;
   index?: number;
@@ -112,14 +113,24 @@ function metadataToItem(
 
   if (meta.type === "season") return null;
 
+  const isEpisode = meta.type === "episode";
   const title =
-    meta.type === "episode" && meta.grandparentTitle
-      ? meta.grandparentTitle
-      : meta.title;
+    isEpisode && meta.grandparentTitle ? meta.grandparentTitle : meta.title;
+
+  const seriesId = isEpisode
+    ? meta.grandparentRatingKey
+      ? `plex-${meta.grandparentRatingKey}`
+      : undefined
+    : meta.type === "show"
+      ? `plex-${meta.ratingKey}`
+      : meta.parentRatingKey
+        ? `plex-${meta.parentRatingKey}`
+        : undefined;
 
   return {
     id: `plex-${meta.ratingKey}`,
     title,
+    episodeTitle: isEpisode ? meta.title : undefined,
     overview: meta.summary,
     posterPath: meta.thumb
       ? plexArtUrl(plexUrl, meta.thumb)
@@ -142,7 +153,7 @@ function metadataToItem(
       : undefined,
     season: meta.parentIndex,
     episode: meta.index,
-    seriesId: meta.parentRatingKey ? `plex-${meta.parentRatingKey}` : undefined,
+    seriesId,
     tmdbId,
     tvdbId,
     plexRatingKey: meta.ratingKey,
@@ -230,6 +241,27 @@ export async function fetchPlexLibrary(
     for (const meta of metadata) {
       const item = metadataToItem(meta, plexUrl, token, section.type);
       if (item) items.push(item);
+    }
+
+    if (section.type === "show") {
+      onProgress?.({
+        phase: "metadata",
+        message: `Loading episodes from ${section.title}…`,
+        sectionIndex: i + 1,
+        sectionCount,
+        itemsLoaded: items.length,
+      });
+
+      const episodesData = await plexGet<PlexMediaContainer>(
+        plexUrl,
+        token,
+        `/library/sections/${section.key}/all?type=4&sort=addedAt:desc`
+      );
+      const episodes = episodesData.MediaContainer?.Metadata ?? [];
+      for (const meta of episodes) {
+        const item = metadataToItem(meta, plexUrl, token, "show");
+        if (item) items.push(item);
+      }
     }
   }
 

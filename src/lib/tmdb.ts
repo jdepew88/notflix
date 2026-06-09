@@ -246,6 +246,14 @@ export async function searchMovies(apiKey: string, query: string): Promise<Media
   return data.results.map(toMediaItem);
 }
 
+export async function searchTv(apiKey: string, query: string): Promise<MediaItem[]> {
+  const data = await tmdbFetch<TmdbTvResponse>(
+    `/search/tv?query=${encodeURIComponent(query)}`,
+    apiKey
+  );
+  return data.results.map(toTvMediaItem);
+}
+
 export async function getMovieDetails(apiKey: string, id: number) {
   return tmdbFetch<
     TmdbMovie & {
@@ -372,28 +380,87 @@ export async function getMoviesByGenre(
   return { items: data.results.map(toMediaItem), totalPages: data.total_pages };
 }
 
+async function enrichSeriesWithTmdb(
+  item: MediaItem,
+  apiKey: string
+): Promise<MediaItem> {
+  let tmdbId = item.tmdbId;
+  if (!tmdbId) {
+    const results = await searchTv(apiKey, item.title);
+    tmdbId = results[0]?.tmdbId;
+  }
+  if (!tmdbId) return item;
+
+  const details = await getTvDetails(apiKey, tmdbId);
+  return {
+    ...item,
+    tmdbId,
+    mediaType: "tv",
+    title: details.name || item.title,
+    overview: item.overview || details.overview,
+    posterPath: item.posterPath || posterUrl(details.poster_path ?? undefined),
+    backdropPath: item.backdropPath || backdropUrl(details.backdrop_path ?? undefined),
+    releaseDate: item.releaseDate || details.first_air_date,
+    rating: item.rating ?? details.vote_average,
+    genres:
+      item.genres?.length ? item.genres : details.genres.map((g) => g.name),
+  };
+}
+
+async function enrichMovieWithTmdb(
+  item: MediaItem,
+  apiKey: string
+): Promise<MediaItem> {
+  let tmdbId = item.tmdbId;
+  if (!tmdbId) {
+    const results = await searchMovies(apiKey, item.title);
+    tmdbId = results[0]?.tmdbId;
+  }
+  if (!tmdbId) return item;
+
+  const details = await getMovieDetails(apiKey, tmdbId);
+  return {
+    ...item,
+    tmdbId,
+    mediaType: "movie",
+    title: details.title || item.title,
+    overview: item.overview || details.overview,
+    posterPath: item.posterPath || posterUrl(details.poster_path ?? undefined),
+    backdropPath: item.backdropPath || backdropUrl(details.backdrop_path ?? undefined),
+    releaseDate: item.releaseDate || details.release_date,
+    rating: item.rating ?? details.vote_average,
+    runtime: item.runtime ?? details.runtime,
+    genres:
+      item.genres?.length
+        ? item.genres
+        : details.genres.map((g) => g.name),
+  };
+}
+
 export async function enrichLibraryWithTmdb(
   items: MediaItem[],
   apiKey: string
 ): Promise<MediaItem[]> {
-  const enriched = await Promise.all(
-    items.slice(0, 10).map(async (item) => {
-      try {
-        const results = await searchMovies(apiKey, item.title);
-        const match = results[0];
-        if (!match) return item;
-        return {
-          ...item,
-          overview: match.overview || item.overview,
-          posterPath: match.posterPath,
-          backdropPath: match.backdropPath,
-          releaseDate: match.releaseDate || item.releaseDate,
-          rating: match.rating,
-        };
-      } catch {
-        return item;
-      }
-    })
-  );
-  return [...enriched, ...items.slice(10)];
+  const targets = items.filter((item) => item.type === "series" || item.type === "movie");
+  const enrichedById = new Map<string, MediaItem>();
+  const batchSize = 8;
+
+  for (let i = 0; i < targets.length; i += batchSize) {
+    const batch = targets.slice(i, i + batchSize);
+    await Promise.all(
+      batch.map(async (item) => {
+        try {
+          const enriched =
+            item.type === "series"
+              ? await enrichSeriesWithTmdb(item, apiKey)
+              : await enrichMovieWithTmdb(item, apiKey);
+          enrichedById.set(item.id, enriched);
+        } catch {
+          /* keep original */
+        }
+      })
+    );
+  }
+
+  return items.map((item) => enrichedById.get(item.id) ?? item);
 }
