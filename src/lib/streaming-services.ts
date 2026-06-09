@@ -29,6 +29,28 @@ export const STREAMING_SERVICE_FILTERS: StreamingServiceFilter[] = [
   { id: "paramount", label: "Paramount+" },
 ];
 
+/** TMDB watch provider IDs for US discover API (`with_watch_providers`). */
+export const TMDB_PROVIDER_IDS: Record<
+  Exclude<StreamingServiceFilterId, "all">,
+  number
+> = {
+  netflix: 8,
+  prime: 9,
+  hulu: 15,
+  disney: 337,
+  max: 1899,
+  apple: 350,
+  peacock: 386,
+  paramount: 531,
+};
+
+export function getTmdbProviderId(
+  serviceId: StreamingServiceFilterId
+): number | undefined {
+  if (serviceId === "all") return undefined;
+  return TMDB_PROVIDER_IDS[serviceId];
+}
+
 /** TMDB flatrate provider_name values (and aliases) per filter. */
 const FLATRATE_NAME_MATCHERS: Record<
   Exclude<StreamingServiceFilterId, "all">,
@@ -83,13 +105,8 @@ export function filterRowItems(
   return items.filter((item) => itemMatchesStreamingService(item, serviceId));
 }
 
-/** Rows that should not be filtered by streaming service (user playback state / library). */
-export const STREAMING_FILTER_EXEMPT_ROW_IDS = new Set([
-  "continue-watching",
-  "plex-recent",
-  "plex-movies",
-  "plex-shows",
-]);
+/** Rows kept visible when a streaming-service chip is active. */
+export const STREAMING_FILTER_EXEMPT_ROW_IDS = new Set(["continue-watching"]);
 
 export function getStreamingServiceLabel(
   serviceId: StreamingServiceFilterId

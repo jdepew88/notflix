@@ -31,7 +31,7 @@ function buildPlayRequest(request: NextRequest) {
       peerflixUrl: settings.peerflixUrl || getPeerflixUrl() || undefined,
       realDebridToken: settings.realDebridToken || getRealDebridToken() || undefined,
       tmdbApiKey: settings.tmdbApiKey || getTmdbApiKey() || undefined,
-      plexOnly: settings.plexOnly ?? true,
+      plexOnly: settings.plexOnly ?? false,
     },
     streamIndex,
   };

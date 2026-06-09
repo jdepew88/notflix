@@ -380,6 +380,32 @@ export async function getMoviesByGenre(
   return { items: data.results.map(toMediaItem), totalPages: data.total_pages };
 }
 
+export async function discoverMoviesByProvider(
+  apiKey: string,
+  providerId: number,
+  page = 1,
+  country = "US"
+): Promise<MediaItem[]> {
+  const data = await tmdbFetch<TmdbResponse>(
+    `/discover/movie?with_watch_providers=${providerId}&watch_region=${country}&sort_by=popularity.desc&page=${page}`,
+    apiKey
+  );
+  return data.results.map(toMediaItem);
+}
+
+export async function discoverTvByProvider(
+  apiKey: string,
+  providerId: number,
+  page = 1,
+  country = "US"
+): Promise<MediaItem[]> {
+  const data = await tmdbFetch<TmdbTvResponse>(
+    `/discover/tv?with_watch_providers=${providerId}&watch_region=${country}&sort_by=popularity.desc&page=${page}`,
+    apiKey
+  );
+  return data.results.map(toTvMediaItem);
+}
+
 async function enrichSeriesWithTmdb(
   item: MediaItem,
   apiKey: string

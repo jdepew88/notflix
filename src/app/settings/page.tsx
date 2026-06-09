@@ -483,13 +483,13 @@ export default function SettingsPage() {
         <section className="rounded bg-netflix-dark p-6">
           <h2 className="mb-4 text-xl font-semibold">Content source</h2>
           <p className="mb-4 text-sm text-netflix-light-gray">
-            Plex-only mode shows titles from your Plex library only — no TMDB filler rows or
-            Real-Debrid fallback. Recommended for a pure home-theater experience.
+            When enabled, browse shows only your Plex library — no TMDB rows, streaming-service
+            filters, or Real-Debrid fallback. Off by default (Plex + TMDB + Debrid).
           </p>
           <label className="flex cursor-pointer items-center gap-3">
             <input
               type="checkbox"
-              checked={form.plexOnly ?? true}
+              checked={form.plexOnly ?? false}
               onChange={(e) => setForm({ ...form, plexOnly: e.target.checked })}
               className="h-4 w-4 rounded accent-netflix-red"
             />

@@ -36,7 +36,7 @@ export function mergeSettingsForServerOps(request: NextRequest): ServerSettings 
     torrentioUrl: "",
     peerflixUrl: "",
     directPlay: true,
-    plexOnly: true,
+    plexOnly: false,
   };
   const client = mergeAllSettings(
     empty,

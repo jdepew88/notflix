@@ -22,7 +22,7 @@ export default function MyListPage() {
   useEffect(() => {
     async function load() {
       const settings = getEffectiveSettings(storeSettings);
-      const onlyPlex = settings.plexOnly ?? true;
+      const onlyPlex = settings.plexOnly ?? false;
       const items: MediaItem[] = [];
 
       const libraryRes = await fetchWithSettings("/api/library", settings);

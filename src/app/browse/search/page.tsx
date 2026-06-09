@@ -25,7 +25,7 @@ export default function SearchPage() {
       setLoading(true);
       try {
         const settings = getEffectiveSettings(storeSettings);
-        const onlyPlex = settings.plexOnly ?? true;
+        const onlyPlex = settings.plexOnly ?? false;
         const needle = q.toLowerCase();
 
         const libraryRes = await fetchWithSettings("/api/library", settings);

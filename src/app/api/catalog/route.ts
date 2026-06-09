@@ -18,6 +18,8 @@ import {
   getSimilarTv,
   getGenres,
   getMoviesByGenre,
+  discoverMoviesByProvider,
+  discoverTvByProvider,
   enrichItemsWithWatchProviders,
 } from "@/lib/tmdb";
 import { getTmdbApiKey } from "@/lib/env";
@@ -128,6 +130,24 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({
         items: await withWatchProviders(result.items, apiKey, country),
         totalPages: result.totalPages,
+      });
+    }
+
+    if (type === "discover_provider") {
+      const providerId = parseInt(
+        request.nextUrl.searchParams.get("providerId") ?? "",
+        10
+      );
+      const media = request.nextUrl.searchParams.get("media") ?? "movie";
+      if (!Number.isFinite(providerId)) {
+        return NextResponse.json({ error: "providerId required" }, { status: 400 });
+      }
+      const items =
+        media === "tv"
+          ? await discoverTvByProvider(apiKey, providerId, page, country)
+          : await discoverMoviesByProvider(apiKey, providerId, page, country);
+      return NextResponse.json({
+        items: await withWatchProviders(items, apiKey, country),
       });
     }
 

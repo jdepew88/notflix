@@ -24,7 +24,7 @@ export async function GET(request: NextRequest) {
     peerflixUrl: settings.peerflixUrl || getPeerflixUrl() || undefined,
     realDebridToken: settings.realDebridToken || getRealDebridToken() || undefined,
     tmdbApiKey: settings.tmdbApiKey || getTmdbApiKey() || undefined,
-    plexOnly: settings.plexOnly ?? true,
+    plexOnly: settings.plexOnly ?? false,
   });
 
   if (result.source === "none") {

@@ -395,6 +395,10 @@ export default function WatchPage() {
       setStreamQuality(null);
       setIsDebridPlayback(false);
       setStreamSession(null);
+      setStreamUrl(null);
+      setProxiedStreamUrl(null);
+      setSourceUrl(null);
+      setSourcePath(null);
       setError("");
 
       const settings = getEffectiveSettings(storeSettings);
@@ -1122,6 +1126,7 @@ export default function WatchPage() {
         </div>
       )}
       <VideoPlayer
+        key={`${id}-s${watchSeason ?? 0}-e${watchEpisode ?? 0}`}
         src={streamUrl}
         title={playerTitle}
         poster={posterUrl(item.posterPath, "w780")}

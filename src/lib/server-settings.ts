@@ -42,7 +42,7 @@ export function settingsFromEnv(): ServerSettings {
     torrentioUrl: getTorrentioUrl(),
     peerflixUrl: getPeerflixUrl(),
     directPlay: process.env.DIRECT_PLAY !== "false",
-    plexOnly: process.env.PLEX_ONLY !== "false",
+    plexOnly: process.env.PLEX_ONLY === "true",
   };
 }
 

@@ -9,9 +9,9 @@ import {
 import { getContinueWatchingItems, useAppStore } from "@/lib/store";
 import {
   filterRowItems,
-  itemMatchesStreamingService,
-  STREAMING_FILTER_EXEMPT_ROW_IDS,
   getStreamingServiceLabel,
+  getTmdbProviderId,
+  STREAMING_FILTER_EXEMPT_ROW_IDS,
   type StreamingServiceFilterId,
 } from "@/lib/streaming-services";
 import {
@@ -92,6 +92,8 @@ export function BrowseContent() {
   const [libraryStatus, setLibraryStatus] = useState<string>("");
   const [loadFailed, setLoadFailed] = useState(false);
   const [streamingFilter, setStreamingFilter] = useState<StreamingServiceFilterId>("all");
+  const [providerRows, setProviderRows] = useState<ContentRowData[]>([]);
+  const [loadingProvider, setLoadingProvider] = useState(false);
   const [moreRowIndex, setMoreRowIndex] = useState(0);
   const [moreRowsExhausted, setMoreRowsExhausted] = useState(false);
   const [syncStatus, setSyncStatus] = useState<LibrarySyncStatus | null>(null);
@@ -233,6 +235,74 @@ export function BrowseContent() {
     void loadBrowse();
   }, [loadBrowse, activeProfileId]);
 
+  useEffect(() => {
+    if (streamingFilter === "all") {
+      setProviderRows([]);
+      setLoadingProvider(false);
+      return;
+    }
+
+    const settings = getEffectiveSettings(storeSettings);
+    const providerId = getTmdbProviderId(streamingFilter);
+    if (!settings.tmdbApiKey || settings.plexOnly || !providerId) {
+      setProviderRows([]);
+      return;
+    }
+
+    let cancelled = false;
+    const label = getStreamingServiceLabel(streamingFilter);
+
+    async function loadProviderCatalog() {
+      setLoadingProvider(true);
+      try {
+        const [moviesRes, tvRes] = await Promise.all([
+          fetchWithSettings(
+            `/api/catalog?type=discover_provider&providerId=${providerId}&media=movie`,
+            settings
+          ),
+          fetchWithSettings(
+            `/api/catalog?type=discover_provider&providerId=${providerId}&media=tv`,
+            settings
+          ),
+        ]);
+
+        if (cancelled) return;
+
+        const rows: ContentRowData[] = [];
+        if (moviesRes.ok) {
+          const data = await moviesRes.json();
+          if (data.items?.length) {
+            rows.push({
+              id: `provider-${streamingFilter}-movies`,
+              title: `Movies on ${label}`,
+              items: data.items as MediaItem[],
+            });
+          }
+        }
+        if (tvRes.ok) {
+          const data = await tvRes.json();
+          if (data.items?.length) {
+            rows.push({
+              id: `provider-${streamingFilter}-tv`,
+              title: `TV on ${label}`,
+              items: data.items as MediaItem[],
+            });
+          }
+        }
+        setProviderRows(rows);
+      } catch {
+        if (!cancelled) setProviderRows([]);
+      } finally {
+        if (!cancelled) setLoadingProvider(false);
+      }
+    }
+
+    void loadProviderCatalog();
+    return () => {
+      cancelled = true;
+    };
+  }, [streamingFilter, storeSettings]);
+
   const loadMoreRows = useCallback(async () => {
     if (loadingMoreRef.current || moreRowsExhausted) return;
 
@@ -275,7 +345,7 @@ export function BrowseContent() {
 
   useEffect(() => {
     const sentinel = sentinelRef.current;
-    if (!sentinel || loading || moreRowsExhausted) return;
+    if (!sentinel || loading || moreRowsExhausted || streamingFilter !== "all") return;
 
     const observer = new IntersectionObserver(
       ([entry]) => {
@@ -286,7 +356,7 @@ export function BrowseContent() {
 
     observer.observe(sentinel);
     return () => observer.disconnect();
-  }, [loading, moreRowsExhausted, loadMoreRows]);
+  }, [loading, moreRowsExhausted, loadMoreRows, streamingFilter]);
 
   useEffect(() => {
     let cancelled = false;
@@ -327,21 +397,32 @@ export function BrowseContent() {
     };
   }, [syncStatus?.running, syncStatus?.status, allRows.length, storeSettings, loadBrowse]);
 
-  const filteredRows = useMemo(
-    () => applyStreamingFilterToRows(allRows, streamingFilter),
-    [allRows, streamingFilter]
-  );
+  const filteredRows = useMemo(() => {
+    if (streamingFilter === "all") {
+      return applyStreamingFilterToRows(allRows, "all");
+    }
+
+    const continueRow = allRows.find((row) => row.id === "continue-watching");
+    const rows = [...providerRows];
+    if (continueRow) rows.unshift(continueRow);
+    return rows;
+  }, [allRows, streamingFilter, providerRows]);
 
   const displayHero = useMemo(() => {
     if (streamingFilter === "all") return hero;
-    if (!hero) return null;
-    return itemMatchesStreamingService(hero, streamingFilter) ? hero : null;
-  }, [hero, streamingFilter]);
+    const firstMovie = providerRows
+      .flatMap((row) => row.items)
+      .find((item) => item.type === "movie");
+    return firstMovie ?? providerRows[0]?.items[0] ?? null;
+  }, [hero, streamingFilter, providerRows]);
 
   const settings = getEffectiveSettings(storeSettings);
   const configured = isLibraryConfigured(settings);
   const filterActive = streamingFilter !== "all";
-  const filterEmpty = filterActive && filteredRows.length === 0 && allRows.length > 0;
+  const filterEmpty =
+    filterActive && !loadingProvider && filteredRows.length === 0;
+  const showStreamingFilters =
+    Boolean(settings.tmdbApiKey) && !settings.plexOnly && (allRows.length > 0 || filterActive);
 
   if (loading) {
     return (
@@ -362,14 +443,18 @@ export function BrowseContent() {
         />
       )}
       <div className={displayHero ? "-mt-16 relative z-10" : "pt-4"}>
-        {allRows.length > 0 && (
+        {showStreamingFilters && (
           <StreamingServiceFilterBar
             active={streamingFilter}
             onChange={setStreamingFilter}
           />
         )}
 
-        {filterEmpty ? (
+        {filterActive && loadingProvider ? (
+          <div className="flex justify-center py-16">
+            <div className="h-10 w-10 animate-spin rounded-full border-4 border-white/30 border-t-white" />
+          </div>
+        ) : filterEmpty ? (
           <div className="flex flex-col items-center justify-center px-4 py-16 text-center md:px-12">
             <p className="text-lg font-medium text-white">
               No titles on {getStreamingServiceLabel(streamingFilter)}

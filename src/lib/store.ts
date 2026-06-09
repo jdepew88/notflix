@@ -125,7 +125,7 @@ export const useAppStore = create<AppState>()(
         plexUrl: "",
         plexToken: "",
         directPlay: true,
-        plexOnly: true,
+        plexOnly: false,
       },
       setUser: (user) => set({ user }),
       hydrateUserState: (payload) => {

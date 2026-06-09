@@ -37,7 +37,7 @@ export function Navbar() {
     { href: "/browse", label: "Home" },
     { href: "/browse/search", label: "Search" },
     { href: "/browse/my-list", label: "My List" },
-    ...(settings.plexOnly ? [] : [{ href: "/browse/debrid", label: "Debrid" }]),
+    { href: "/browse/debrid", label: "Debrid" },
   ];
 
   useEffect(() => {
