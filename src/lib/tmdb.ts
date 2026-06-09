@@ -490,3 +490,86 @@ export async function enrichLibraryWithTmdb(
 
   return items.map((item) => enrichedById.get(item.id) ?? item);
 }
+
+export async function applyTmdbMetadataToItem(
+  item: MediaItem,
+  apiKey: string,
+  options: {
+    tmdbId?: number;
+    mediaType?: TmdbMediaType;
+    forceArtwork?: boolean;
+    query?: string;
+  } = {}
+): Promise<MediaItem> {
+  const isSeries = item.type === "series" || options.mediaType === "tv";
+  let tmdbId = options.tmdbId ?? item.tmdbId;
+  let mediaType: TmdbMediaType = options.mediaType ?? (isSeries ? "tv" : "movie");
+
+  if (!tmdbId) {
+    const query = options.query?.trim() || item.title;
+    const results = isSeries ? await searchTv(apiKey, query) : await searchMovies(apiKey, query);
+    const pick = results[0];
+    if (!pick?.tmdbId) return item;
+    tmdbId = pick.tmdbId;
+    mediaType = pick.mediaType ?? mediaType;
+  }
+
+  if (mediaType === "tv" || item.type === "series") {
+    const details = await getTvDetails(apiKey, tmdbId);
+    return {
+      ...item,
+      tmdbId,
+      mediaType: "tv",
+      title: details.name || item.title,
+      overview: details.overview || item.overview,
+      posterPath: options.forceArtwork
+        ? posterUrl(details.poster_path ?? undefined)
+        : item.posterPath || posterUrl(details.poster_path ?? undefined),
+      backdropPath: options.forceArtwork
+        ? backdropUrl(details.backdrop_path ?? undefined)
+        : item.backdropPath || backdropUrl(details.backdrop_path ?? undefined),
+      releaseDate: details.first_air_date || item.releaseDate,
+      rating: details.vote_average ?? item.rating,
+      genres: details.genres.map((g) => g.name),
+      genreIds: details.genres.map((g) => g.id),
+    };
+  }
+
+  const details = await getMovieDetails(apiKey, tmdbId);
+  return {
+    ...item,
+    tmdbId,
+    mediaType: "movie",
+    title: details.title || item.title,
+    overview: details.overview || item.overview,
+    posterPath: options.forceArtwork
+      ? posterUrl(details.poster_path ?? undefined)
+      : item.posterPath || posterUrl(details.poster_path ?? undefined),
+    backdropPath: options.forceArtwork
+      ? backdropUrl(details.backdrop_path ?? undefined)
+      : item.backdropPath || backdropUrl(details.backdrop_path ?? undefined),
+    releaseDate: details.release_date || item.releaseDate,
+    rating: details.vote_average ?? item.rating,
+    runtime: details.runtime ?? item.runtime,
+    genres: details.genres.map((g) => g.name),
+    genreIds: details.genres.map((g) => g.id),
+  };
+}
+
+export async function searchTmdbForMatch(
+  apiKey: string,
+  query: string,
+  mediaType?: TmdbMediaType
+): Promise<MediaItem[]> {
+  const trimmed = query.trim();
+  if (!trimmed) return [];
+
+  if (mediaType === "tv") return searchTv(apiKey, trimmed);
+  if (mediaType === "movie") return searchMovies(apiKey, trimmed);
+
+  const [movies, shows] = await Promise.all([
+    searchMovies(apiKey, trimmed),
+    searchTv(apiKey, trimmed),
+  ]);
+  return [...movies, ...shows].sort((a, b) => (b.rating ?? 0) - (a.rating ?? 0));
+}

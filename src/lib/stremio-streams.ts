@@ -30,9 +30,40 @@ export function ensureEnglishInStremioAddonUrl(url: string): string {
   return `${base}/language=english`;
 }
 
+/** Torrentio `qualityfilter` lists qualities to exclude — keep cam/telesync/screener available. */
+export function ensureCamTelesyncAllowedInTorrentioUrl(url: string): string {
+  const parts = url.split("|");
+  const next: string[] = [];
+
+  for (const part of parts) {
+    const lower = part.toLowerCase();
+    if (!lower.startsWith("qualityfilter=")) {
+      next.push(part);
+      continue;
+    }
+
+    const excluded = part
+      .slice("qualityfilter=".length)
+      .split(",")
+      .map((value) => value.trim().toLowerCase())
+      .filter(Boolean)
+      .filter(
+        (value) =>
+          !["cam", "scr", "screener", "ts", "telesync", "telecine"].includes(value)
+      );
+
+    if (excluded.length > 0) {
+      next.push(`qualityfilter=${excluded.join(",")}`);
+    }
+  }
+
+  return next.join("|");
+}
+
 export function finalizeStremioAddonUrl(url: string): string {
   if (!url.trim()) return "";
-  return ensureEnglishInStremioAddonUrl(normalizeStremioBaseUrl(url));
+  const withEnglish = ensureEnglishInStremioAddonUrl(normalizeStremioBaseUrl(url));
+  return ensureCamTelesyncAllowedInTorrentioUrl(withEnglish);
 }
 
 export async function fetchStremioStreams(
@@ -118,6 +149,29 @@ export function isLikelyEnglishStream(stream: StremioStream): boolean {
   return !/\b(fr|de|es|it|pt|ru|ja|ko|zh)\b/.test(label);
 }
 
+/** Prefer releases that usually direct-play in the browser (H.264 + AAC / MP4). */
+export function streamDirectPlayScore(stream: StremioStream): number {
+  const label = streamLabel(stream);
+  let score = streamScore(stream);
+
+  if (label.includes("x264") || label.includes("h264") || label.includes("h.264")) score += 30;
+  if (label.includes("aac") || label.includes("2.0")) score += 25;
+  if (label.includes(".mp4") || label.includes(" mp4")) score += 18;
+  if (label.includes("web-dl") || label.includes("webdl") || label.includes("webrip")) score += 12;
+
+  if (label.includes("hevc") || label.includes("x265") || label.includes("h265")) score -= 18;
+  if (label.includes("dts") || label.includes("ac3") || label.includes("eac3") || label.includes("truehd")) {
+    score -= 22;
+  }
+  if (label.includes(".mkv") || label.includes(" mkv")) score -= 8;
+
+  if (label.includes("cam") || label.includes("camrip")) score -= 4;
+  if (label.includes("telesync") || label.includes("telecine") || /\bts\b/.test(label)) score -= 2;
+  if (label.includes("screener") || label.includes(" scr ")) score -= 3;
+
+  return score;
+}
+
 export function streamScore(stream: StremioStream): number {
   const label = streamLabel(stream);
   if (label.includes("download") || label.includes("⬇")) return -100;
@@ -147,6 +201,15 @@ export function streamScore(stream: StremioStream): number {
 
 function parseStreamQuality(label: string): string | undefined {
   const lower = label.toLowerCase();
+  if (lower.includes("telesync") || lower.includes("telecine") || /\bts\b/.test(lower)) {
+    return "TS";
+  }
+  if (lower.includes("camrip") || lower.includes(" cam ") || lower.startsWith("cam ")) {
+    return "CAM";
+  }
+  if (lower.includes("screener") || lower.includes(" scr ")) {
+    return "SCR";
+  }
   for (const q of ["4k", "2160p", "1080p", "720p", "480p"]) {
     if (lower.includes(q)) return q.toUpperCase().replace("2160P", "4K");
   }
@@ -182,27 +245,37 @@ function formatStreamOption(
   };
 }
 
+export interface ListPlayableStreamsOptions {
+  source?: string;
+  directPlayPreferred?: boolean;
+}
+
 export function listPlayableStremioStreams(
   streams: StremioStream[],
-  source?: string
+  options: ListPlayableStreamsOptions | string = {}
 ): {
   playable: StremioStream[];
   options: StremioStreamOption[];
 } {
+  const opts: ListPlayableStreamsOptions =
+    typeof options === "string" ? { source: options } : options;
+  const rank = opts.directPlayPreferred ? streamDirectPlayScore : streamScore;
+
   const playable = streams
     .filter((s) => s.url?.startsWith("http"))
     .filter(isLikelyEnglishStream)
-    .sort((a, b) => streamScore(b) - streamScore(a));
+    .sort((a, b) => rank(b) - rank(a));
 
-  const options = playable.map((stream, index) =>
-    formatStreamOption(stream, index, index === 0, source)
+  const streamOptions = playable.map((stream, index) =>
+    formatStreamOption(stream, index, index === 0, opts.source)
   );
 
-  return { playable, options };
+  return { playable, options: streamOptions };
 }
 
 export function mergeStremioStreamLists(
-  lists: Array<{ streams: StremioStream[]; source: string }>
+  lists: Array<{ streams: StremioStream[]; source: string }>,
+  options: { directPlayPreferred?: boolean } = {}
 ): { playable: StremioStream[]; options: StremioStreamOption[] } {
   const seen = new Set<string>();
   const merged: StremioStream[] = [];
@@ -215,10 +288,12 @@ export function mergeStremioStreamLists(
     }
   }
 
-  const { playable, options } = listPlayableStremioStreams(merged);
+  const { playable, options: streamOptions } = listPlayableStremioStreams(merged, {
+    directPlayPreferred: options.directPlayPreferred,
+  });
   return {
     playable,
-    options: options.map((opt, index) => ({
+    options: streamOptions.map((opt, index) => ({
       ...opt,
       index,
       recommended: index === 0,

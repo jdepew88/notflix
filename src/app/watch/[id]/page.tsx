@@ -93,6 +93,8 @@ export default function WatchPage() {
   } | null>(null);
   const [seriesSeasons, setSeriesSeasons] = useState<SeasonGroup[]>([]);
   const [playbackPreflight, setPlaybackPreflight] = useState<PlaybackPreflight | null>(null);
+  const [searchingDebrid, setSearchingDebrid] = useState(false);
+  const [debridDirectPlaySearch, setDebridDirectPlaySearch] = useState(false);
   const proxiedStreamUrlRef = useRef<string | null>(null);
   const updateProgress = useAppStore((s) => s.updateProgress);
   const storeSettings = useAppStore((s) => s.settings);
@@ -387,6 +389,66 @@ export default function WatchPage() {
     [playQuery, storeSettings, playRemoteStream, item, torrentStreams]
   );
 
+  const searchDebridForDirectPlay = useCallback(async () => {
+    const settings = getEffectiveSettings(storeSettings);
+    if (!settings.realDebridToken) {
+      setError("Real-Debrid token required. Add it in Settings.");
+      return;
+    }
+    if (settings.plexOnly) {
+      setError("Turn off Plex-only mode in Settings to search Debrid.");
+      return;
+    }
+
+    const typeParam = searchParams.get("type");
+    const mediaType = resolveWatchMediaType(typeParam, id);
+    const seasonNum = searchParams.get("season")
+      ? parseInt(searchParams.get("season")!, 10)
+      : undefined;
+    const episodeNum = searchParams.get("episode")
+      ? parseInt(searchParams.get("episode")!, 10)
+      : undefined;
+    const tmdbId = item?.tmdbId ?? parseWatchTmdbId(id, searchParams);
+    if (!tmdbId) {
+      setError("TMDB id missing — right-click the title and use Fix metadata first.");
+      return;
+    }
+
+    setSearchingDebrid(true);
+    setError("");
+    setTranscodeLoading(false);
+    setPlaybackPreflight(null);
+    setResolveStatus("Searching Debrid for direct-play streams…");
+
+    try {
+      const query = `${buildPlayQuery({
+        tmdbId,
+        type: mediaType,
+        season: seasonNum,
+        episode: episodeNum,
+        seriesId: item?.seriesId ?? searchParams.get("seriesId") ?? undefined,
+        title: item?.title ?? searchParams.get("title") ?? undefined,
+      })}&debridOnly=1&directPlay=1`;
+
+      const streamsRes = await fetchWithSettings(`/api/play/streams?${query}`, settings);
+      const sources = await streamsRes.json();
+      if (!streamsRes.ok || sources.source !== "torrentio" || !sources.streams?.length) {
+        throw new Error(sources.message || sources.error || "No direct-play torrents found");
+      }
+
+      if (sources.item) setItem(sources.item);
+      setPlayQuery(query);
+      setDebridDirectPlaySearch(true);
+      setTorrentStreams(sources.streams);
+      setResolveStatus("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Debrid search failed");
+      setResolveStatus("");
+    } finally {
+      setSearchingDebrid(false);
+    }
+  }, [storeSettings, item, id, searchParams]);
+
   // Sync Plex credentials to httpOnly cookies before playback (required for HLS segment requests)
   useEffect(() => {
     let cancelled = false;
@@ -419,6 +481,8 @@ export default function WatchPage() {
       setSourcePath(null);
       setError("");
       setPlaybackPreflight(null);
+      setSearchingDebrid(false);
+      setDebridDirectPlaySearch(false);
 
       const settings = getEffectiveSettings(storeSettings);
       const useDirectPlay = Boolean(settings.directPlay) && !forceTranscode;
@@ -1086,12 +1150,21 @@ export default function WatchPage() {
   if (torrentStreams && torrentStreams.length > 0 && item) {
     const season = searchParams.get("season");
     const episode = searchParams.get("episode");
+    const episodeSubtitle =
+      season && episode
+        ? `${formatEpisodeLabel(parseInt(season, 10), parseInt(episode, 10))} · choose a torrent (season packs supported)`
+        : undefined;
     return (
       <StreamPicker
         title={item.title}
         subtitle={
-          season && episode
-            ? `${formatEpisodeLabel(parseInt(season, 10), parseInt(episode, 10))} · choose a torrent (season packs supported)`
+          debridDirectPlaySearch
+            ? "Direct-play search via Real-Debrid"
+            : episodeSubtitle
+        }
+        hint={
+          debridDirectPlaySearch
+            ? `${torrentStreams.length} source${torrentStreams.length === 1 ? "" : "s"} · H.264/AAC preferred · CAM & telesync included`
             : undefined
         }
         streams={torrentStreams}
@@ -1129,6 +1202,20 @@ export default function WatchPage() {
         : playbackPreflight
           ? "ready"
           : "analyzing";
+    const watchSettings = getEffectiveSettings(storeSettings);
+    const watchTmdbId = item?.tmdbId ?? parseWatchTmdbId(id, searchParams);
+    const showDebridSearch = Boolean(
+      item &&
+      !torrentStreams?.length &&
+      !watchSettings.plexOnly &&
+      watchSettings.realDebridToken &&
+      watchTmdbId &&
+      playbackPreflight &&
+      (playbackPreflight.strategy === "transcode" ||
+        playbackPreflight.strategy === "blocked" ||
+        playbackPreflight.needsTranscode ||
+        transcodeLoading)
+    );
 
     return (
       <div className="flex h-screen flex-col items-center justify-center bg-black px-4">
@@ -1137,6 +1224,9 @@ export default function WatchPage() {
           phase={preflightPhase}
           statusText={resolveStatus || undefined}
           error={error || undefined}
+          showDebridSearch={showDebridSearch}
+          searchingDebrid={searchingDebrid}
+          onSearchDebrid={() => void searchDebridForDirectPlay()}
         />
         {!playbackPreflight && !error && (
           <p className="mt-6 text-sm text-netflix-light-gray">

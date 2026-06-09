@@ -162,6 +162,22 @@ function metadataToItem(
   };
 }
 
+export async function fetchPlexMetadataItem(
+  plexUrl: string,
+  token: string,
+  ratingKey: string
+): Promise<MediaItem | null> {
+  const data = await plexGet<PlexMediaContainer>(
+    plexUrl,
+    token,
+    `/library/metadata/${ratingKey}`
+  );
+  const meta = data.MediaContainer?.Metadata?.[0];
+  if (!meta) return null;
+  const sectionType = meta.type === "show" ? "show" : "movie";
+  return metadataToItem(meta, plexUrl, token, sectionType);
+}
+
 export async function refreshPlexLibraries(
   plexUrl: string,
   token: string

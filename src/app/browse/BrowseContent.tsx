@@ -24,6 +24,7 @@ import { ContentRow } from "@/components/browse/ContentRow";
 import { LibrarySyncBar, type LibrarySyncStatus } from "@/components/browse/LibrarySyncBar";
 import { StreamingServiceFilterBar } from "@/components/browse/StreamingServiceFilterBar";
 import type { MediaItem } from "@/lib/types";
+import { onLibraryItemUpdated } from "@/lib/item-update-events";
 
 interface ContentRowData {
   id: string;
@@ -265,6 +266,18 @@ export function BrowseContent() {
   useEffect(() => {
     void loadBrowse();
   }, [loadBrowse, activeProfileId]);
+
+  useEffect(() => {
+    return onLibraryItemUpdated((updated) => {
+      setAllRows((prev) =>
+        prev.map((row) => ({
+          ...row,
+          items: row.items.map((item) => (item.id === updated.id ? { ...item, ...updated } : item)),
+        }))
+      );
+      setHero((current) => (current?.id === updated.id ? { ...current, ...updated } : current));
+    });
+  }, []);
 
   useEffect(() => {
     if (streamingFilter === "all") {

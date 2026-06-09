@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertTriangle, CheckCircle2, Cpu, Film, Volume2, Subtitles } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Cpu, Film, HardDriveDownload, Volume2, Subtitles } from "lucide-react";
 import {
   prepEstimateLabel,
   strategyLabel,
@@ -14,6 +14,9 @@ interface PlaybackPreflightPanelProps {
   statusText?: string;
   error?: string;
   className?: string;
+  showDebridSearch?: boolean;
+  searchingDebrid?: boolean;
+  onSearchDebrid?: () => void;
 }
 
 export function PlaybackPreflightPanel({
@@ -22,6 +25,9 @@ export function PlaybackPreflightPanel({
   statusText,
   error,
   className,
+  showDebridSearch = false,
+  searchingDebrid = false,
+  onSearchDebrid,
 }: PlaybackPreflightPanelProps) {
   const busy = phase === "analyzing" || phase === "preparing";
 
@@ -120,6 +126,33 @@ export function PlaybackPreflightPanel({
           {preflight.subtitleNote && (
             <p className="text-netflix-light-gray">{preflight.subtitleNote}</p>
           )}
+        </div>
+      )}
+
+      {showDebridSearch && onSearchDebrid && (
+        <div className="mt-4 border-t border-white/10 pt-4">
+          <p className="mb-3 text-sm text-netflix-light-gray">
+            This file needs server transcoding. Search Real-Debrid for an H.264/AAC release that may
+            direct-play instead (includes CAM and telesync when available).
+          </p>
+          <button
+            type="button"
+            onClick={onSearchDebrid}
+            disabled={searchingDebrid || busy}
+            className="flex w-full items-center justify-center gap-2 rounded bg-netflix-red px-4 py-2.5 text-sm font-semibold text-white hover:bg-netflix-red-hover disabled:cursor-wait disabled:opacity-60"
+          >
+            {searchingDebrid ? (
+              <>
+                <div className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+                Searching Debrid…
+              </>
+            ) : (
+              <>
+                <HardDriveDownload className="h-4 w-4" />
+                Search Debrid for direct play
+              </>
+            )}
+          </button>
         </div>
       )}
     </div>

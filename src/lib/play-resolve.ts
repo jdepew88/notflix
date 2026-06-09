@@ -37,6 +37,10 @@ export interface PlayResolveRequest {
   realDebridToken?: string;
   tmdbApiKey?: string;
   plexOnly?: boolean;
+  /** Skip Plex/library and search torrent addons only. */
+  debridOnly?: boolean;
+  /** Rank torrents for browser direct play (H.264 + AAC / MP4). */
+  directPlayPreferred?: boolean;
 }
 
 export interface PlayResolveResult {
@@ -222,6 +226,7 @@ async function tryPlexMatch(request: PlayResolveRequest): Promise<PlayResolveRes
 }
 
 async function fetchSortedTorrentStreams(request: PlayResolveRequest) {
+  const directPlayPreferred = Boolean(request.directPlayPreferred);
   const imdbId = await resolveImdbId(request);
   const videoId = buildStreamVideoId({
     tmdbId: request.tmdbId,
@@ -255,12 +260,64 @@ async function fetchSortedTorrentStreams(request: PlayResolveRequest) {
   }
 
   if (lists.length === 0) return null;
-  return mergeStremioStreamLists(lists);
+  return mergeStremioStreamLists(lists, { directPlayPreferred });
+}
+
+async function listDebridPlaybackSources(
+  request: PlayResolveRequest
+): Promise<ListPlaybackSourcesResult> {
+  if (request.plexOnly) {
+    return {
+      source: "none",
+      message: "Plex-only mode is on. Turn it off in Settings to search Real-Debrid.",
+    };
+  }
+
+  if (!torrentioBaseUrl(request) && !peerflixBaseUrl(request)) {
+    return {
+      source: "none",
+      message:
+        "Configure Real-Debrid, Torrentio, or Peerflix in Settings to search torrent sources.",
+    };
+  }
+
+  const item = await buildMediaItem(request);
+
+  try {
+    const listed = await fetchSortedTorrentStreams({
+      ...request,
+      directPlayPreferred: request.directPlayPreferred ?? true,
+    });
+    if (!listed || listed.options.length === 0) {
+      return {
+        source: "none",
+        item,
+        message: "No English torrents found on Real-Debrid for this title.",
+      };
+    }
+
+    return {
+      source: "torrentio",
+      item,
+      watchId: item?.id,
+      streams: listed.options,
+      message: request.directPlayPreferred
+        ? "Choose a direct-play friendly stream (H.264 + AAC preferred)"
+        : "Choose a stream source (English only)",
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Torrent search failed";
+    return { source: "none", item, message };
+  }
 }
 
 export async function listPlaybackSources(
   request: PlayResolveRequest
 ): Promise<ListPlaybackSourcesResult> {
+  if (request.debridOnly) {
+    return listDebridPlaybackSources(request);
+  }
+
   const cached = tryLibraryDbMatch(request);
   if (cached?.item) {
     return {
@@ -327,7 +384,10 @@ export async function openTorrentioStreamByIndex(
   request: PlayResolveRequest,
   streamIndex: number
 ): Promise<OpenTorrentioStreamResult> {
-  const listed = await fetchSortedTorrentStreams(request);
+  const listed = await fetchSortedTorrentStreams({
+    ...request,
+    directPlayPreferred: request.directPlayPreferred ?? Boolean(request.debridOnly),
+  });
   if (!listed || listed.playable.length === 0) {
     throw new Error("No torrent streams available");
   }

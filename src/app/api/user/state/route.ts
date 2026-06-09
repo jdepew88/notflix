@@ -39,6 +39,7 @@ export async function PUT(request: NextRequest) {
     activeProfileId:
       body.activeProfileId !== undefined ? body.activeProfileId : current.activeProfileId,
     myListByProfile: body.myListByProfile ?? current.myListByProfile,
+    queueByProfile: body.queueByProfile ?? current.queueByProfile,
     continueWatchingByProfile:
       body.continueWatchingByProfile ?? current.continueWatchingByProfile,
     lastWatchedByProfile: body.lastWatchedByProfile ?? current.lastWatchedByProfile,

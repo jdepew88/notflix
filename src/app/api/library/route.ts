@@ -11,6 +11,7 @@ import {
   readLibraryDatabase,
   databaseAsCache,
 } from "@/lib/library-store";
+import { applyStoredOverridesToDatabase } from "@/lib/library-item-overrides";
 import {
   isLibrarySyncRunning,
   startBackgroundLibrarySync,
@@ -64,7 +65,8 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    const db = readLibraryDatabase();
+    const dbRaw = readLibraryDatabase();
+    const db = dbRaw ? applyStoredOverridesToDatabase(dbRaw) : null;
     let cache: LibraryCacheData | null = db ? databaseAsCache(db) : null;
     let servedFromCache = false;
     let stale = false;

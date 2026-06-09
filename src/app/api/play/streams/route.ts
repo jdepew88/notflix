@@ -16,6 +16,10 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Invalid tmdbId" }, { status: 400 });
   }
 
+  const debridOnly = params.get("debridOnly") === "1";
+  const directPlayPreferred =
+    params.get("directPlay") === "1" || params.get("directPlayPreferred") === "1";
+
   const result = await listPlaybackSources({
     ...parsed,
     plexUrl: settings.plexUrl,
@@ -25,6 +29,8 @@ export async function GET(request: NextRequest) {
     realDebridToken: settings.realDebridToken || getRealDebridToken() || undefined,
     tmdbApiKey: settings.tmdbApiKey || getTmdbApiKey() || undefined,
     plexOnly: settings.plexOnly ?? false,
+    debridOnly,
+    directPlayPreferred: debridOnly ? true : directPlayPreferred,
   });
 
   if (result.source === "none") {

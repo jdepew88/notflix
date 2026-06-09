@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { PortalProvider } from "@/providers/PortalProvider";
 import { DetailModalProvider } from "@/providers/DetailModalProvider";
+import { TitleContextMenuProvider } from "@/providers/TitleContextMenuProvider";
 import { TitleCardPortal } from "@/components/browse/TitleCardPortal";
 import { DetailModal } from "@/components/browse/DetailModal";
 import { useAppStore } from "@/lib/store";
@@ -72,10 +73,12 @@ export function Providers({ children }: { children: React.ReactNode }) {
   return (
     <PortalProvider>
       <DetailModalProvider>
-        <AppHydrator />
-        {children}
-        <TitleCardPortal />
-        <DetailModal />
+        <TitleContextMenuProvider>
+          <AppHydrator />
+          {children}
+          <TitleCardPortal />
+          <DetailModal />
+        </TitleContextMenuProvider>
       </DetailModalProvider>
     </PortalProvider>
   );

@@ -22,6 +22,12 @@ function buildPlayRequest(request: NextRequest) {
     return { error: NextResponse.json({ error: "Invalid streamIndex" }, { status: 400 }) };
   }
 
+  const debridOnly = params.get("debridOnly") === "1";
+  const directPlayPreferred =
+    params.get("directPlay") === "1" ||
+    params.get("directPlayPreferred") === "1" ||
+    debridOnly;
+
   return {
     request: {
       ...parsed,
@@ -32,6 +38,8 @@ function buildPlayRequest(request: NextRequest) {
       realDebridToken: settings.realDebridToken || getRealDebridToken() || undefined,
       tmdbApiKey: settings.tmdbApiKey || getTmdbApiKey() || undefined,
       plexOnly: settings.plexOnly ?? false,
+      debridOnly,
+      directPlayPreferred,
     },
     streamIndex,
   };

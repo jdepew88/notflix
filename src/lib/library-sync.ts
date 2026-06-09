@@ -31,6 +31,7 @@ import {
 } from "./library-sync-state";
 import { initializeAndResolveHeroVideo } from "./hero-resolve";
 import { attachWatchProvidersToLibrary } from "./library-providers";
+import { applyStoredOverridesToDatabase } from "./library-item-overrides";
 
 interface BuildOptions {
   forceRefresh?: boolean;
@@ -231,10 +232,11 @@ async function buildLibraryCatalogInner(
   });
 
   const featured = pickFeaturedHero(items, previous?.featuredHeroId);
-  const rows =
+  let rows =
     source === "plex" ? buildContentRowsFromPlex(items) : buildContentRows(items);
 
   const heroCandidates = pickHeroCandidates(items, previous?.featuredHeroId);
+  const previousDb = readLibraryDatabase();
 
   let db: LibraryDatabase = {
     version: 2,
@@ -249,7 +251,17 @@ async function buildLibraryCatalogInner(
     featuredHeroId: featured?.id ?? null,
     heroPrimaryId: heroCandidates[0]?.id ?? featured?.id ?? null,
     heroVideoError: null,
+    itemOverrides: previousDb?.itemOverrides,
   };
+  if (previousDb?.itemOverrides && Object.keys(previousDb.itemOverrides).length > 0) {
+    const withOverrides = applyStoredOverridesToDatabase({
+      ...previousDb,
+      items,
+      rows,
+    });
+    items = withOverrides.items;
+    rows = withOverrides.rows;
+  }
 
   if (settings.tmdbApiKey && items.length > 0) {
     reportProgress({
@@ -268,8 +280,11 @@ async function buildLibraryCatalogInner(
       rows: enriched.rows,
       watchProvidersCountry: enriched.watchProvidersCountry,
       watchProvidersAt: enriched.watchProvidersAt,
+      itemOverrides: previousDb?.itemOverrides ?? db.itemOverrides,
     };
   }
+
+  db = applyStoredOverridesToDatabase(db);
 
   reportProgress({
     phase: "saving",

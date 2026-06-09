@@ -19,10 +19,16 @@ export interface LastWatchedEntry {
   updatedAt: number;
 }
 
+export interface QueueEntry {
+  id: string;
+  addedAt: number;
+}
+
 export interface UserState {
   profiles: UserProfile[];
   activeProfileId: string | null;
   myListByProfile: Record<string, string[]>;
+  queueByProfile?: Record<string, QueueEntry[]>;
   continueWatchingByProfile: Record<string, Record<string, number>>;
   lastWatchedByProfile?: Record<string, Record<string, LastWatchedEntry>>;
 }
@@ -78,6 +84,7 @@ export function readUserState(userId: string): UserState {
       profiles: parsed.profiles?.length ? parsed.profiles : defaultUserState().profiles,
       activeProfileId: parsed.activeProfileId ?? null,
       myListByProfile: parsed.myListByProfile ?? {},
+      queueByProfile: parsed.queueByProfile ?? {},
       continueWatchingByProfile: parsed.continueWatchingByProfile ?? {},
       lastWatchedByProfile: parsed.lastWatchedByProfile ?? {},
     };
@@ -152,6 +159,7 @@ export function removeProfile(userId: string, profileId: string): void {
   if (state.profiles.length <= 1) throw new Error("You must keep at least one profile");
   state.profiles = state.profiles.filter((p) => p.id !== profileId);
   delete state.myListByProfile[profileId];
+  delete state.queueByProfile?.[profileId];
   delete state.continueWatchingByProfile[profileId];
   if (state.activeProfileId === profileId) state.activeProfileId = null;
   writeUserState(userId, state);

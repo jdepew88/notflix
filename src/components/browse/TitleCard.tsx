@@ -8,6 +8,7 @@ import { posterUrl } from "@/lib/tmdb";
 import { canPlayItem, watchHref } from "@/lib/playback";
 import { WatchProviderLogos } from "@/components/browse/WatchProviderLogos";
 import type { MediaItem } from "@/lib/types";
+import { useTitleContextMenu } from "@/providers/TitleContextMenuProvider";
 import { cn } from "@/lib/cn";
 
 interface TitleCardProps {
@@ -18,6 +19,7 @@ interface TitleCardProps {
 
 export function TitleCard({ item, className, priority }: TitleCardProps) {
   const router = useRouter();
+  const { openContextMenu } = useTitleContextMenu();
   const poster = posterUrl(item.posterPath, "w342");
   const href = canPlayItem(item) ? watchHref(item) : `/browse/title/${encodeURIComponent(item.id)}`;
 
@@ -32,6 +34,7 @@ export function TitleCard({ item, className, priority }: TitleCardProps) {
     <Link
       href={href}
       onClick={handleClick}
+      onContextMenu={(e) => openContextMenu(e, item)}
       className={cn(
         "title-card-hover relative block shrink-0 overflow-hidden rounded-sm bg-netflix-dark",
         "w-[140px] sm:w-[160px] md:w-[200px] lg:w-[240px]",

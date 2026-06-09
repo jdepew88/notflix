@@ -9,6 +9,7 @@ import { WatchProviderLogos } from "@/components/browse/WatchProviderLogos";
 import { usePortal } from "@/providers/PortalProvider";
 import { useDetailModal } from "@/providers/DetailModalProvider";
 import type { MediaItem } from "@/lib/types";
+import { useTitleContextMenu } from "@/providers/TitleContextMenuProvider";
 import { cn } from "@/lib/cn";
 
 interface TitleCardWithHoverProps {
@@ -23,6 +24,7 @@ export function TitleCardWithHover({ item, className, priority, large }: TitleCa
   const router = useRouter();
   const { setPortal, item: portalItem } = usePortal();
   const { openDetail } = useDetailModal();
+  const { openContextMenu } = useTitleContextMenu();
   const [isHovered, setIsHovered] = useState(false);
   const hoverTimer = useRef<ReturnType<typeof setTimeout>>(null);
 
@@ -67,6 +69,7 @@ export function TitleCardWithHover({ item, className, priority, large }: TitleCa
       role="button"
       tabIndex={0}
       onClick={handleClick}
+      onContextMenu={(e) => openContextMenu(e, item)}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();

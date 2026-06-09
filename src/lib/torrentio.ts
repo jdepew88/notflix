@@ -19,7 +19,7 @@ export {
 };
 
 export function buildDefaultTorrentioUrl(realDebridToken: string): string {
-  return `https://torrentio.strem.fun/realdebrid=${encodeURIComponent(realDebridToken)}|sort=quality|qualityfilter=480p,scr,cam,unknown|language=english`;
+  return `https://torrentio.strem.fun/realdebrid=${encodeURIComponent(realDebridToken)}|sort=quality|language=english`;
 }
 
 export function buildStreamVideoId(options: {

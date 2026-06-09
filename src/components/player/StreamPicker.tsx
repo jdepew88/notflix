@@ -12,6 +12,7 @@ interface StreamPickerProps {
   onCancel: () => void;
   openingIndex?: number | null;
   error?: string;
+  hint?: string;
 }
 
 export function StreamPicker({
@@ -22,6 +23,7 @@ export function StreamPicker({
   onCancel,
   openingIndex = null,
   error,
+  hint,
 }: StreamPickerProps) {
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-black">
@@ -49,7 +51,8 @@ export function StreamPicker({
           </div>
         )}
         <p className="mb-4 text-sm text-netflix-light-gray">
-          {streams.length} source{streams.length === 1 ? "" : "s"} found · sorted by quality
+          {hint ??
+            `${streams.length} source${streams.length === 1 ? "" : "s"} found · sorted by quality`}
         </p>
 
         <div className="mx-auto flex max-w-3xl flex-col gap-2">

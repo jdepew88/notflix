@@ -15,10 +15,16 @@ interface AuthUser {
   name: string;
 }
 
+export interface QueueEntry {
+  id: string;
+  addedAt: number;
+}
+
 type UserStatePayload = {
   profiles: UserProfile[];
   activeProfileId: string | null;
   myListByProfile: Record<string, string[]>;
+  queueByProfile?: Record<string, QueueEntry[]>;
   continueWatchingByProfile: Record<string, Record<string, number>>;
   lastWatchedByProfile?: Record<string, Record<string, LastWatchedEntry>>;
 };
@@ -35,6 +41,7 @@ interface AppState {
   profiles: UserProfile[];
   activeProfileId: string | null;
   myListByProfile: Record<string, string[]>;
+  queueByProfile: Record<string, QueueEntry[]>;
   continueWatchingByProfile: Record<string, Record<string, number>>;
   lastWatchedByProfile: Record<string, Record<string, LastWatchedEntry>>;
   settings: {
@@ -52,6 +59,8 @@ interface AppState {
   setActiveProfile: (id: string) => void;
   addToMyList: (id: string) => void;
   removeFromMyList: (id: string) => void;
+  addToQueue: (id: string) => void;
+  removeFromQueue: (id: string) => void;
   updateProgress: (id: string, progress: number, meta?: ProgressUpdateMeta) => void;
   updateSettings: (settings: Partial<AppState["settings"]>) => void;
   logoutLocal: () => void;
@@ -115,6 +124,7 @@ export const useAppStore = create<AppState>()(
       profiles: [],
       activeProfileId: null,
       myListByProfile: {},
+      queueByProfile: {},
       continueWatchingByProfile: {},
       lastWatchedByProfile: {},
       settings: {
@@ -134,6 +144,7 @@ export const useAppStore = create<AppState>()(
           profiles: payload.profiles,
           activeProfileId: payload.activeProfileId,
           myListByProfile: payload.myListByProfile,
+          queueByProfile: payload.queueByProfile ?? {},
           continueWatchingByProfile: payload.continueWatchingByProfile,
           lastWatchedByProfile: payload.lastWatchedByProfile ?? {},
         });
@@ -164,6 +175,30 @@ export const useAppStore = create<AppState>()(
         };
         set({ myListByProfile });
         void persistUserStatePatch({ myListByProfile });
+      },
+      addToQueue: (id) => {
+        const pk = profileKey(get());
+        if (!pk || !get().userStateReady) return;
+        const queues = get().queueByProfile;
+        const current = queues[pk] ?? [];
+        if (current.some((entry) => entry.id === id)) return;
+        const queueByProfile = {
+          ...queues,
+          [pk]: [...current, { id, addedAt: Date.now() }],
+        };
+        set({ queueByProfile });
+        void persistUserStatePatch({ queueByProfile });
+      },
+      removeFromQueue: (id) => {
+        const pk = profileKey(get());
+        if (!pk || !get().userStateReady) return;
+        const queues = get().queueByProfile;
+        const queueByProfile = {
+          ...queues,
+          [pk]: (queues[pk] ?? []).filter((entry) => entry.id !== id),
+        };
+        set({ queueByProfile });
+        void persistUserStatePatch({ queueByProfile });
       },
       updateProgress: (id, progress, meta) => {
         const pk = profileKey(get());
@@ -235,6 +270,7 @@ export const useAppStore = create<AppState>()(
           profiles: [],
           activeProfileId: null,
           myListByProfile: {},
+          queueByProfile: {},
           continueWatchingByProfile: {},
           lastWatchedByProfile: {},
         }),
@@ -260,6 +296,17 @@ export function getActiveMyList(): string[] {
 
 export function isInMyList(id: string): boolean {
   return getActiveMyList().includes(id);
+}
+
+export function getActiveQueue(): QueueEntry[] {
+  const s = useAppStore.getState();
+  const pk = s.activeProfileId;
+  if (!pk) return [];
+  return s.queueByProfile[pk] ?? [];
+}
+
+export function isInQueue(id: string): boolean {
+  return getActiveQueue().some((entry) => entry.id === id);
 }
 
 export function getMediaProgress(id: string): number {

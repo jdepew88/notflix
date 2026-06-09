@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import { createHash } from "crypto";
 import type { MediaItem } from "./types";
+import type { LibraryItemOverride } from "./library-item-overrides";
 import type { ServerSettings } from "./server-settings";
 import { getDataPath } from "./data-path";
 import { resolveLibraryPath } from "./library-path";
@@ -35,6 +36,7 @@ export interface LibraryDatabase {
   watchProvidersCountry?: string;
   /** When watch providers were last persisted to this database. */
   watchProvidersAt?: string;
+  itemOverrides?: Record<string, LibraryItemOverride>;
 }
 
 const DB_VERSION = 2 as const;
