@@ -34,6 +34,12 @@ export function isBrowserVideoCodec(codec: string): boolean {
   return false;
 }
 
+export function videoNeedsBrowserTranscode(videoCodec?: string, formatName?: string): boolean {
+  if (videoCodec) return !isBrowserVideoCodec(videoCodec);
+  if (!formatName) return false;
+  return /avi|xvid|asf|wmv|mpeg|hevc|h265/i.test(formatName);
+}
+
 export function isHlsVideoCopySafe(codec: string): boolean {
   const c = codec.toLowerCase();
   if (HLS_VIDEO_COPY.has(c)) return true;
@@ -71,8 +77,62 @@ export function isEnglishLanguage(value?: string): boolean {
   return primary === "en" || primary === "eng";
 }
 
+const NON_ENGLISH_AUDIO_HINTS = [
+  "french",
+  "français",
+  "german",
+  "deutsch",
+  "spanish",
+  "español",
+  "italian",
+  "japanese",
+  "korean",
+  "chinese",
+  "mandarin",
+  "cantonese",
+  "hindi",
+  "russian",
+  "portuguese",
+  "polish",
+  "dutch",
+  "nordic",
+  "swedish",
+  "danish",
+  "norwegian",
+  "finnish",
+  "turkish",
+  "arabic",
+  "thai",
+  "vietnamese",
+];
+
 function trackMatchesEnglish(track: StreamTrack): boolean {
+  const label = `${track.language ?? ""} ${track.title ?? ""}`.toLowerCase();
+  if (NON_ENGLISH_AUDIO_HINTS.some((hint) => label.includes(hint))) return false;
   return isEnglishLanguage(track.language) || isEnglishLanguage(track.title);
+}
+
+function audioTrackPreferenceScore(track: StreamTrack): number {
+  let score = 0;
+  const codec = track.codec.toLowerCase();
+  const english = trackMatchesEnglish(track);
+  const lang = track.language?.toLowerCase().trim() ?? "";
+  const title = (track.title ?? "").toLowerCase();
+
+  if (english) score += 60;
+  if (lang === "und" || lang === "") {
+    if (!NON_ENGLISH_AUDIO_HINTS.some((hint) => title.includes(hint))) score += 12;
+  }
+  if (codec === "aac" || isBrowserAudioCodec(codec)) score += 35;
+  if (track.channels === 2) score += 6;
+  if (track.default && english) score += 20;
+  if (track.default && !english) score -= 25;
+  if (track.forced && !english) score -= 40;
+  if (TRANSCODE_AUDIO.has(codec)) score -= 8;
+  if (title.includes("commentary")) score -= 30;
+  if (title.includes("descriptive") || title.includes("ad")) score -= 15;
+
+  return score;
 }
 
 export function defaultSubtitleTrack(subtitles: StreamTrack[]): number | null {
@@ -93,25 +153,13 @@ export function defaultSubtitleTrack(subtitles: StreamTrack[]): number | null {
 }
 
 export function defaultAudioTrack(audio: StreamTrack[]): number {
-  const englishAac = audio.find(
-    (a) => a.codec.toLowerCase() === "aac" && trackMatchesEnglish(a)
+  if (audio.length === 0) return 0;
+  if (audio.length === 1) return audio[0].index;
+
+  const ranked = [...audio].sort(
+    (a, b) => audioTrackPreferenceScore(b) - audioTrackPreferenceScore(a)
   );
-  if (englishAac) return englishAac.index;
-
-  const englishTracks = audio.filter(trackMatchesEnglish);
-  if (englishTracks.length > 0) {
-    const browserOk = englishTracks.find((a) => BROWSER_AUDIO.has(a.codec.toLowerCase()));
-    if (browserOk) return browserOk.index;
-    const def = englishTracks.find((a) => a.default);
-    if (def) return def.index;
-    return englishTracks[0].index;
-  }
-
-  const aac = audio.find((a) => a.codec.toLowerCase() === "aac");
-  if (aac) return aac.index;
-  const def = audio.find((a) => a.default);
-  if (def) return def.index;
-  return audio[0]?.index ?? 0;
+  return ranked[0].index;
 }
 
 export function subtitleStreamOrdinal(subtitles: StreamTrack[], absoluteIndex: number): number {

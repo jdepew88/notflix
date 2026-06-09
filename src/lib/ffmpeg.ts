@@ -3,7 +3,13 @@ import fs from "fs";
 import fsPromises from "fs/promises";
 import path from "path";
 import crypto from "crypto";
-import { ffmpegThreadArgs, getFfmpegPreset, getFfmpegTuneArgs } from "./ffmpeg-config";
+import {
+  ffmpegThreadArgs,
+  getFfmpegMaxHeight,
+  getFfmpegPreset,
+  getFfmpegTuneArgs,
+  getTranscodeManifestTimeoutMs,
+} from "./ffmpeg-config";
 import type { ProbeResult, StreamTrack } from "@/types/media-tracks";
 import {
   containerPrefersTranscode,
@@ -12,6 +18,7 @@ import {
   isBrowserVideoCodec,
   isHlsVideoCopySafe,
   isTextSubtitleCodec,
+  videoNeedsBrowserTranscode,
   subtitleStreamOrdinal,
   trackNeedsTranscode,
   trackResponseDefaults,
@@ -217,9 +224,11 @@ function parseProbeOutput(output: string): ProbeResult {
     ? !isHlsVideoCopySafe(videoCodec)
     : /avi|xvid|asf|wmv|mpeg/i.test(formatName);
 
+  const needsDirectVideoTranscode = videoNeedsBrowserTranscode(videoCodec, formatName);
+
   const needsTranscode =
     needsAudioTranscode ||
-    needsVideoTranscode ||
+    needsDirectVideoTranscode ||
     audio.length === 0 ||
     (needsAudioTranscode && containerPrefersTranscode(formatName));
 
@@ -230,6 +239,7 @@ function parseProbeOutput(output: string): ProbeResult {
     audio,
     subtitles,
     needsVideoTranscode,
+    needsDirectVideoTranscode,
     needsTranscode,
   };
 }
@@ -346,6 +356,17 @@ export async function startHlsTranscode(
             ? subtitleStreamOrdinal(subtitlesForOrdinal, subtitleStreamIndex)
             : 0;
 
+        const maxHeight = encodeVideo ? getFfmpegMaxHeight() : 0;
+        const videoFilterParts: string[] = [];
+        if (encodeVideo && maxHeight > 0) {
+          videoFilterParts.push(`scale=-2:'min(${maxHeight},ih)'`);
+        }
+        if (burnInImageSub) {
+          videoFilterParts.push(`subtitles=${subtitleFilterPath(input)}:si=${subOrdinal}`);
+        }
+        const videoFilter =
+          videoFilterParts.length > 0 ? ["-vf", videoFilterParts.join(",")] : [];
+
         const args = [
           ...inputArgs,
           ...ffmpegThreadArgs(),
@@ -366,9 +387,7 @@ export async function startHlsTranscode(
                 "yuv420p",
               ]
             : []),
-          ...(burnInImageSub
-            ? ["-vf", `subtitles=${subtitleFilterPath(input)}:si=${subOrdinal}`]
-            : []),
+          ...videoFilter,
           "-c:a",
           copyAudio ? "copy" : "aac",
           ...(copyAudio ? [] : ["-b:a", "192k", "-ac", "2"]),
@@ -419,9 +438,14 @@ export async function startHlsTranscode(
     );
   }
 
-  const ready = await waitForFile(manifestPath);
+  const manifestTimeout = getTranscodeManifestTimeoutMs(encodeVideo);
+  const ready = await waitForFile(manifestPath, manifestTimeout);
   if (!ready) {
-    throw new Error("Transcode timed out. Ensure ffmpeg is installed and in PATH.");
+    throw new Error(
+      encodeVideo
+        ? `Transcode timed out after ${Math.round(manifestTimeout / 1000)}s. Large 4K files need more CPU time — try FFMPEG_TRANSCODE_TIMEOUT_MS or FFMPEG_MAX_HEIGHT=720.`
+        : "Transcode timed out. Ensure ffmpeg is installed and in PATH."
+    );
   }
 
   return { session, manifestPath };

@@ -17,6 +17,8 @@ export interface ProbeResult {
   audio: StreamTrack[];
   subtitles: StreamTrack[];
   needsVideoTranscode: boolean;
+  /** True when video must be transcoded for plain browser playback (stricter than HLS copy). */
+  needsDirectVideoTranscode?: boolean;
   needsTranscode: boolean;
   defaultAudioIndex?: number;
   defaultSubtitleIndex?: number | null;

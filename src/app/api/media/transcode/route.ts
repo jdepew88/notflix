@@ -49,7 +49,7 @@ export async function GET(request: NextRequest) {
       if (resolved) {
         const probe = await probeMediaFile(resolved);
         subtitlesForOrdinal = probe.subtitles;
-        transcodeVideo = probe.needsVideoTranscode;
+        transcodeVideo = probe.needsVideoTranscode || Boolean(probe.needsDirectVideoTranscode);
         const selectedAudio = probe.audio.find((a) => a.index === audioIndex);
         copyAudio = Boolean(selectedAudio && !trackNeedsTranscode(selectedAudio));
         if (subtitleIndex !== null && !subtitleCodec) {
@@ -59,7 +59,7 @@ export async function GET(request: NextRequest) {
     } else if (url) {
       const probe = await probeMediaUrl(url);
       subtitlesForOrdinal = probe.subtitles;
-      transcodeVideo = probe.needsVideoTranscode;
+      transcodeVideo = probe.needsVideoTranscode || Boolean(probe.needsDirectVideoTranscode);
       const selectedAudio = probe.audio.find((a) => a.index === audioIndex);
       copyAudio = Boolean(selectedAudio && !trackNeedsTranscode(selectedAudio));
       if (subtitleIndex !== null && !subtitleCodec) {

@@ -18,7 +18,13 @@ import {
   mergeStremioStreamLists,
 } from "./stremio-streams";
 import { registerStreamUrlIfLong } from "./stream-sessions";
-import { getMovieDetails, getMovieExternalIds, getTvExternalIds } from "./tmdb";
+import {
+  getMovieDetails,
+  getMovieExternalIds,
+  getTvExternalIds,
+  searchMovies,
+  searchTv,
+} from "./tmdb";
 import { findLibraryEpisode } from "./episode-library";
 import type { MediaItem } from "./types";
 
@@ -102,6 +108,73 @@ async function buildMediaItem(request: PlayResolveRequest): Promise<MediaItem | 
     season: request.season,
     episode: request.episode,
   };
+}
+
+function pickTmdbSearchResult(
+  results: MediaItem[],
+  request: PlayResolveRequest
+): number | undefined {
+  if (results.length === 0) return undefined;
+  if (request.year) {
+    const withYear = results.find((item) => {
+      const y = item.releaseDate ? parseInt(item.releaseDate.slice(0, 4), 10) : undefined;
+      return y === request.year;
+    });
+    if (withYear?.tmdbId) return withYear.tmdbId;
+  }
+  return results[0]?.tmdbId;
+}
+
+/** Resolve TMDB id from request, library DB, or title search when missing. */
+export async function resolvePlayTmdbId(
+  request: PlayResolveRequest
+): Promise<number | undefined> {
+  if (request.tmdbId) return request.tmdbId;
+
+  const db = readLibraryDatabase();
+  if (db?.items.length) {
+    const match = findInPlexLibrary(db.items, {
+      tmdbId: request.tmdbId,
+      title: request.title,
+      year: request.year,
+      type: request.type,
+      season: request.season,
+      episode: request.episode,
+      seriesId: request.seriesId,
+    });
+    if (match?.tmdbId) return match.tmdbId;
+
+    if (request.type === "series" && request.title) {
+      const show = db.items.find(
+        (item) =>
+          item.type === "series" &&
+          item.tmdbId &&
+          item.title.toLowerCase() === request.title!.toLowerCase()
+      );
+      if (show?.tmdbId) return show.tmdbId;
+    }
+  }
+
+  if (!request.tmdbApiKey || !request.title?.trim()) return undefined;
+
+  try {
+    if (request.type === "series") {
+      const results = await searchTv(request.tmdbApiKey, request.title);
+      return pickTmdbSearchResult(results, request);
+    }
+    const results = await searchMovies(request.tmdbApiKey, request.title);
+    return pickTmdbSearchResult(results, request);
+  } catch {
+    return undefined;
+  }
+}
+
+export async function enrichPlayResolveRequest(
+  request: PlayResolveRequest
+): Promise<PlayResolveRequest> {
+  const tmdbId = await resolvePlayTmdbId(request);
+  if (!tmdbId || request.tmdbId === tmdbId) return request;
+  return { ...request, tmdbId };
 }
 
 async function resolveImdbId(request: PlayResolveRequest): Promise<string | undefined> {
@@ -226,33 +299,34 @@ async function tryPlexMatch(request: PlayResolveRequest): Promise<PlayResolveRes
 }
 
 async function fetchSortedTorrentStreams(request: PlayResolveRequest) {
-  const directPlayPreferred = Boolean(request.directPlayPreferred);
-  const imdbId = await resolveImdbId(request);
+  const resolved = await enrichPlayResolveRequest(request);
+  const directPlayPreferred = Boolean(resolved.directPlayPreferred);
+  const imdbId = await resolveImdbId(resolved);
   const videoId = buildStreamVideoId({
-    tmdbId: request.tmdbId,
+    tmdbId: resolved.tmdbId,
     imdbId,
-    type: request.type,
-    season: request.season,
-    episode: request.episode,
+    type: resolved.type,
+    season: resolved.season,
+    episode: resolved.episode,
   });
 
   const lists: Array<{ streams: Awaited<ReturnType<typeof fetchTorrentioStreams>>; source: string }> =
     [];
 
-  const torrentio = torrentioBaseUrl(request);
+  const torrentio = torrentioBaseUrl(resolved);
   if (torrentio) {
     try {
-      const streams = await fetchTorrentioStreams(torrentio, request.type, videoId);
+      const streams = await fetchTorrentioStreams(torrentio, resolved.type, videoId);
       lists.push({ streams, source: "Torrentio" });
     } catch (err) {
       console.warn("[play-resolve] Torrentio fetch failed:", err);
     }
   }
 
-  const peerflix = peerflixBaseUrl(request);
+  const peerflix = peerflixBaseUrl(resolved);
   if (peerflix && peerflix !== torrentio) {
     try {
-      const streams = await fetchStremioStreams(peerflix, request.type, videoId);
+      const streams = await fetchStremioStreams(peerflix, resolved.type, videoId);
       lists.push({ streams, source: "Peerflix" });
     } catch (err) {
       console.warn("[play-resolve] Peerflix fetch failed:", err);
@@ -281,12 +355,13 @@ async function listDebridPlaybackSources(
     };
   }
 
-  const item = await buildMediaItem(request);
+  const enriched = await enrichPlayResolveRequest(request);
+  const item = await buildMediaItem(enriched);
 
   try {
     const listed = await fetchSortedTorrentStreams({
-      ...request,
-      directPlayPreferred: request.directPlayPreferred ?? true,
+      ...enriched,
+      directPlayPreferred: enriched.directPlayPreferred ?? true,
     });
     if (!listed || listed.options.length === 0) {
       return {
@@ -355,15 +430,18 @@ export async function listPlaybackSources(
     };
   }
 
-  const item = await buildMediaItem(request);
+  const enriched = await enrichPlayResolveRequest(request);
+  const item = await buildMediaItem(enriched);
 
   try {
-    const listed = await fetchSortedTorrentStreams(request);
+    const listed = await fetchSortedTorrentStreams(enriched);
     if (!listed || listed.options.length === 0) {
       return {
         source: "none",
         item,
-        message: "Not in Plex and no English torrents found.",
+        message: enriched.tmdbId
+          ? "Not in Plex and no English torrents found."
+          : "Not in Plex and could not resolve TMDB id for torrent search. Fix metadata via right-click → Fix metadata.",
       };
     }
 
@@ -384,9 +462,10 @@ export async function openTorrentioStreamByIndex(
   request: PlayResolveRequest,
   streamIndex: number
 ): Promise<OpenTorrentioStreamResult> {
+  const enriched = await enrichPlayResolveRequest(request);
   const listed = await fetchSortedTorrentStreams({
-    ...request,
-    directPlayPreferred: request.directPlayPreferred ?? Boolean(request.debridOnly),
+    ...enriched,
+    directPlayPreferred: enriched.directPlayPreferred ?? Boolean(enriched.debridOnly),
   });
   if (!listed || listed.playable.length === 0) {
     throw new Error("No torrent streams available");
@@ -397,10 +476,10 @@ export async function openTorrentioStreamByIndex(
     throw new Error("Invalid stream selection");
   }
 
-  const item = await buildMediaItem(request);
-  const directUrl = await resolveTorrentioStreamUrl(stream.url, request.realDebridToken, {
-    season: request.season,
-    episode: request.episode,
+  const item = await buildMediaItem(enriched);
+  const directUrl = await resolveTorrentioStreamUrl(stream.url, enriched.realDebridToken, {
+    season: enriched.season,
+    episode: enriched.episode,
   });
   const { session, proxyPath } = registerStreamUrlIfLong(directUrl);
   const option = listed.options[streamIndex];
@@ -437,10 +516,11 @@ export async function resolvePlayback(
     };
   }
 
-  const item = await buildMediaItem(request);
+  const enriched = await enrichPlayResolveRequest(request);
+  const item = await buildMediaItem(enriched);
 
   try {
-    const opened = await openTorrentioStreamByIndex(request, 0);
+    const opened = await openTorrentioStreamByIndex(enriched, 0);
     return {
       source: "torrentio",
       item: opened.item ?? item,

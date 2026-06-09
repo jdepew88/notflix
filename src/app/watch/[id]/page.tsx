@@ -36,7 +36,7 @@ import {
 import type { ProbeResult } from "@/types/media-tracks";
 
 function buildPlayQuery(opts: {
-  tmdbId: number;
+  tmdbId?: number;
   type: "movie" | "series";
   season?: number;
   episode?: number;
@@ -44,7 +44,7 @@ function buildPlayQuery(opts: {
   title?: string;
 }): string {
   const params = new URLSearchParams();
-  params.set("tmdbId", String(opts.tmdbId));
+  if (opts.tmdbId != null) params.set("tmdbId", String(opts.tmdbId));
   params.set("type", opts.type);
   if (opts.season != null) params.set("season", String(opts.season));
   if (opts.episode != null) params.set("episode", String(opts.episode));
@@ -409,8 +409,9 @@ export default function WatchPage() {
       ? parseInt(searchParams.get("episode")!, 10)
       : undefined;
     const tmdbId = item?.tmdbId ?? parseWatchTmdbId(id, searchParams);
-    if (!tmdbId) {
-      setError("TMDB id missing — right-click the title and use Fix metadata first.");
+    const title = item?.title ?? searchParams.get("title") ?? undefined;
+    if (!tmdbId && !title?.trim()) {
+      setError("Title or TMDB id required — right-click the title and use Fix metadata if needed.");
       return;
     }
 
@@ -427,7 +428,7 @@ export default function WatchPage() {
         season: seasonNum,
         episode: episodeNum,
         seriesId: item?.seriesId ?? searchParams.get("seriesId") ?? undefined,
-        title: item?.title ?? searchParams.get("title") ?? undefined,
+        title,
       })}&debridOnly=1&directPlay=1`;
 
       const streamsRes = await fetchWithSettings(`/api/play/streams?${query}`, settings);

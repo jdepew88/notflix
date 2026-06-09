@@ -79,7 +79,8 @@ export function analyzePlaybackPreflight(
   const subtitle = selectedSubtitleTrack(probe, options);
   const needsAudioTranscode = trackNeedsTranscode(audio);
   const needsVideoTranscode = Boolean(
-    probe.needsVideoTranscode ||
+    probe.needsDirectVideoTranscode ||
+      probe.needsVideoTranscode ||
       (probe.videoCodec && !isBrowserVideoCodec(probe.videoCodec))
   );
   const needsSubTranscode = options.subtitleIndex !== undefined && options.subtitleIndex !== null;

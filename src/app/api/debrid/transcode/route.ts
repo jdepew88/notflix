@@ -48,7 +48,7 @@ export async function GET(request: NextRequest) {
       input = filePath;
       const probe = await probeMediaFile(filePath);
       subtitlesForOrdinal = probe.subtitles;
-      transcodeVideo = probe.needsVideoTranscode;
+      transcodeVideo = probe.needsVideoTranscode || Boolean(probe.needsDirectVideoTranscode);
       const selectedAudio = probe.audio.find((a) => a.index === audioIndex);
       copyAudio = Boolean(selectedAudio && !trackNeedsTranscode(selectedAudio));
       if (subtitleIndex !== null) {
@@ -57,7 +57,7 @@ export async function GET(request: NextRequest) {
     } else if (resolved.url) {
       const probe = await probeMediaUrl(resolved.url);
       subtitlesForOrdinal = probe.subtitles;
-      transcodeVideo = probe.needsVideoTranscode;
+      transcodeVideo = probe.needsVideoTranscode || Boolean(probe.needsDirectVideoTranscode);
       const selectedAudio = probe.audio.find((a) => a.index === audioIndex);
       copyAudio = Boolean(selectedAudio && !trackNeedsTranscode(selectedAudio));
       if (subtitleIndex !== null) {
