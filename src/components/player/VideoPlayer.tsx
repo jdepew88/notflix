@@ -327,6 +327,9 @@ export function VideoPlayer({
         applyHlsSubtitleSelection(hls, subtitleIndex);
         void attemptAutoplay();
       });
+      hls.on(Hls.Events.SUBTITLE_TRACKS_UPDATED, () => {
+        applyHlsSubtitleSelection(hls, subtitleIndex);
+      });
       hls.on(Hls.Events.ERROR, (_event, data) => {
         if (data.fatal) {
           setPlaybackError(

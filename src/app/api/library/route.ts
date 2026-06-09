@@ -17,8 +17,7 @@ import {
   buildLibraryCatalog,
 } from "@/lib/library-sync";
 import { readLibrarySyncState, syncProgressPercent } from "@/lib/library-sync-state";
-import { attachWatchProvidersToLibrary } from "@/lib/library-providers";
-import { enrichItemsWithWatchProviders } from "@/lib/tmdb";
+import { scheduleWatchProvidersBackfill } from "@/lib/library-providers";
 
 function libraryConfigured(settings: ReturnType<typeof mergeSettings>): boolean {
   return Boolean(
@@ -106,16 +105,7 @@ export async function GET(request: NextRequest) {
     const country = request.nextUrl.searchParams.get("country") ?? "US";
 
     if (genreFilter) {
-      let items = filterByGenre(cache.items, genreFilter);
-      if (settings.tmdbApiKey) {
-        const enriched = await enrichItemsWithWatchProviders(
-          items.slice(0, 40),
-          settings.tmdbApiKey,
-          country
-        );
-        const byId = new Map(enriched.map((item) => [item.id, item]));
-        items = items.map((item) => byId.get(item.id) ?? item);
-      }
+      const items = filterByGenre(cache.items, genreFilter);
       return NextResponse.json({
         items,
         rows: [],
@@ -130,7 +120,7 @@ export async function GET(request: NextRequest) {
     }
 
     if (settings.tmdbApiKey) {
-      cache = await attachWatchProvidersToLibrary(cache, settings.tmdbApiKey, { country });
+      scheduleWatchProvidersBackfill(settings, country);
     }
 
     return NextResponse.json({

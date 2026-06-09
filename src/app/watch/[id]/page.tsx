@@ -28,6 +28,12 @@ import {
   resolveWatchMediaType,
 } from "@/lib/episode-nav";
 import { resolveProgressKey } from "@/lib/watch-progress";
+import { PlaybackPreflightPanel } from "@/components/player/PlaybackPreflightPanel";
+import {
+  analyzePlaybackPreflight,
+  type PlaybackPreflight,
+} from "@/lib/playback-preflight";
+import type { ProbeResult } from "@/types/media-tracks";
 
 function buildPlayQuery(opts: {
   tmdbId: number;
@@ -86,6 +92,7 @@ export default function WatchPage() {
     overlay?: boolean;
   } | null>(null);
   const [seriesSeasons, setSeriesSeasons] = useState<SeasonGroup[]>([]);
+  const [playbackPreflight, setPlaybackPreflight] = useState<PlaybackPreflight | null>(null);
   const proxiedStreamUrlRef = useRef<string | null>(null);
   const updateProgress = useAppStore((s) => s.updateProgress);
   const storeSettings = useAppStore((s) => s.settings);
@@ -203,6 +210,7 @@ export default function WatchPage() {
       const tracksData = await readJsonResponse<{
         error?: string;
         ffmpegRequired?: boolean;
+        ffmpegAvailable?: boolean;
         defaultAudioIndex?: number;
         audio?: StreamTrack[];
         subtitles?: StreamTrack[];
@@ -212,36 +220,58 @@ export default function WatchPage() {
       }>(tracksRes);
 
       if (!tracksRes.ok) {
-        if (opts.debridDirectPlay && opts.proxiedUrl) {
-          setStreamUrl(opts.proxiedUrl);
-          setError(
-            tracksData.error ||
-              "Could not read embedded tracks — playing direct stream."
+        const legacyOnly =
+          opts.path &&
+          isLegacyVideoExtension(opts.path) &&
+          !opts.path.toLowerCase().endsWith(".mkv");
+        if (tracksData.ffmpegRequired) {
+          setPlaybackPreflight(
+            analyzePlaybackPreflight(
+              {
+                format: "unknown",
+                audio: [],
+                subtitles: [],
+                needsTranscode: true,
+                needsVideoTranscode: false,
+              },
+              { ffmpegAvailable: false, preferDirectPlay: opts.useDirectPlay }
+            )
           );
-          return;
-        }
-        if (tracksData.ffmpegRequired && opts.proxiedUrl) {
-          if (opts.path && isLegacyVideoExtension(opts.path)) {
-            throw new Error(
+          if (legacyOnly && opts.proxiedUrl) {
+            setStreamUrl(opts.proxiedUrl);
+            setError(
               tracksData.error ||
-                "ffmpeg is required to play AVI and XviD files in the browser."
+                "ffmpeg not found — AC3/DTS audio and subtitles require ffmpeg in the container."
             );
+            return;
           }
-          setStreamUrl(opts.proxiedUrl);
-          setError(
+          throw new Error(
             tracksData.error ||
-              "ffmpeg not found — subtitles and some audio codecs require ffmpeg."
+              "ffmpeg is required for MKV/AC3/DTS audio and embedded subtitles. Install ffmpeg in the container or set FFMPEG_PATH."
           );
+        }
+        if (opts.proxiedUrl && legacyOnly) {
+          setStreamUrl(opts.proxiedUrl);
+          setError(tracksData.error || "Could not read embedded tracks — playing direct stream.");
           return;
         }
-        if (opts.proxiedUrl) setStreamUrl(opts.proxiedUrl);
-        else throw new Error(tracksData.error || "Could not read embedded tracks");
-        return;
+        throw new Error(tracksData.error || "Could not read embedded tracks");
       }
 
       const audio = tracksData.defaultAudioIndex ?? tracksData.audio?.[0]?.index ?? 0;
       const subtitle: number | null =
         opts.subtitleOverride !== undefined ? opts.subtitleOverride : null;
+
+      const probePayload = tracksData as ProbeResult;
+      const preflight = analyzePlaybackPreflight(probePayload, {
+        ffmpegAvailable: tracksData.ffmpegAvailable !== false,
+        preferDirectPlay: opts.useDirectPlay,
+        subtitleIndex: subtitle,
+      });
+      setPlaybackPreflight(preflight);
+      if (preflight.strategy === "blocked") {
+        throw new Error(preflight.reasons[0] ?? "Playback not supported without ffmpeg");
+      }
 
       setAudioTracks(tracksData.audio ?? []);
       setSubtitleTracks(tracksData.subtitles ?? []);
@@ -260,24 +290,12 @@ export default function WatchPage() {
         proxiedStreamUrlRef.current = opts.proxiedUrl;
       }
 
-      if (opts.debridDirectPlay && opts.proxiedUrl) {
-        if (subtitle !== null) {
-          await startRemux({
-            session: opts.session,
-            url: opts.url,
-            path: opts.path,
-            audio,
-            subtitle,
-          });
-          return;
-        }
-        setStreamUrl(opts.proxiedUrl);
-        return;
-      }
-
       const needsSubTranscode = subtitle !== null;
       const canDirectPlay =
-        opts.useDirectPlay && !tracksData.needsTranscode && !needsSubTranscode;
+        opts.useDirectPlay &&
+        !tracksData.needsTranscode &&
+        !needsSubTranscode &&
+        !opts.debridDirectPlay;
 
       const cachedProxied = opts.proxiedUrl ?? proxiedStreamUrlRef.current;
       if (canDirectPlay && cachedProxied) {
@@ -400,6 +418,7 @@ export default function WatchPage() {
       setSourceUrl(null);
       setSourcePath(null);
       setError("");
+      setPlaybackPreflight(null);
 
       const settings = getEffectiveSettings(storeSettings);
       const useDirectPlay = Boolean(settings.directPlay) && !forceTranscode;
@@ -915,7 +934,9 @@ export default function WatchPage() {
     (index: number) => {
       if (!sourceUrl && !sourcePath && !streamSession) return;
       setAudioIndex(index);
-      if (isDebridPlayback) {
+      const useRemux =
+        isDebridPlayback && !streamProbe.needsTranscode && subtitleIndex === null;
+      if (useRemux) {
         startRemux({
           session: streamSession,
           url: sourceUrl,
@@ -933,7 +954,16 @@ export default function WatchPage() {
         subtitle: subtitleIndex,
       });
     },
-    [sourceUrl, sourcePath, streamSession, subtitleIndex, startTranscode, startRemux, isDebridPlayback]
+    [
+      sourceUrl,
+      sourcePath,
+      streamSession,
+      subtitleIndex,
+      startTranscode,
+      startRemux,
+      isDebridPlayback,
+      streamProbe.needsTranscode,
+    ]
   );
 
   const handleSubtitleChange = useCallback(
@@ -941,13 +971,18 @@ export default function WatchPage() {
       if (!sourceUrl && !sourcePath && !streamSession) return;
       setSubtitleIndex(index);
       const proxied = proxiedStreamUrlRef.current ?? proxiedStreamUrl;
+      const canRevertToDirect =
+        index === null && proxied && !streamProbe.needsTranscode && !isDebridPlayback;
 
-      if (isDebridPlayback) {
-        if (index === null && proxied) {
-          setStreamUrl(proxied);
-          setError("");
-          return;
-        }
+      if (canRevertToDirect) {
+        setStreamUrl(proxied);
+        setError("");
+        return;
+      }
+
+      const useRemux =
+        isDebridPlayback && !streamProbe.needsTranscode && index !== null;
+      if (useRemux) {
         void startRemux({
           session: streamSession,
           url: sourceUrl,
@@ -955,12 +990,6 @@ export default function WatchPage() {
           audio: audioIndex,
           subtitle: index,
         });
-        return;
-      }
-
-      if (index === null && proxied) {
-        setStreamUrl(proxied);
-        setError("");
         return;
       }
 
@@ -979,6 +1008,7 @@ export default function WatchPage() {
       audioIndex,
       proxiedStreamUrl,
       isDebridPlayback,
+      streamProbe.needsTranscode,
       startRemux,
       startTranscode,
     ]
@@ -998,7 +1028,7 @@ export default function WatchPage() {
     (streamUrl.includes("/api/proxy/stream") ||
       streamUrl.includes("/api/plex/stream"));
   const transcodeAvailable =
-    !isDebridPlayback && (!!sourceUrl || !!sourcePath || !!streamSession || !!plexRatingKey);
+    !!sourceUrl || !!sourcePath || !!streamSession || !!plexRatingKey;
   const progressKey =
     inSeriesPlayback && watchSeason != null && watchEpisode != null
       ? resolveProgressKey({
@@ -1092,14 +1122,27 @@ export default function WatchPage() {
   }
 
   if (!streamUrl || !item) {
+    const preflightPhase = transcodeLoading
+      ? "preparing"
+      : error
+        ? "error"
+        : playbackPreflight
+          ? "ready"
+          : "analyzing";
+
     return (
-      <div className="flex h-screen flex-col items-center justify-center bg-black">
-        <div className="h-12 w-12 animate-spin rounded-full border-4 border-white/30 border-t-white" />
-        <p className="mt-4 text-sm text-netflix-light-gray">
-          {transcodeLoading
-            ? "Preparing playback…"
-            : resolveStatus || "Loading..."}
-        </p>
+      <div className="flex h-screen flex-col items-center justify-center bg-black px-4">
+        <PlaybackPreflightPanel
+          preflight={playbackPreflight}
+          phase={preflightPhase}
+          statusText={resolveStatus || undefined}
+          error={error || undefined}
+        />
+        {!playbackPreflight && !error && (
+          <p className="mt-6 text-sm text-netflix-light-gray">
+            {transcodeLoading ? "Preparing playback…" : resolveStatus || "Loading…"}
+          </p>
+        )}
       </div>
     );
   }

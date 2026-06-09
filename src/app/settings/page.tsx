@@ -24,6 +24,8 @@ export default function SettingsPage() {
   const [tvdbStatus, setTvdbStatus] = useState<"idle" | "checking" | "ok" | "error">("idle");
   const [libraryStatus, setLibraryStatus] = useState<"idle" | "checking" | "ok" | "error">("idle");
   const [libraryMessage, setLibraryMessage] = useState("");
+  const [selfTestStatus, setSelfTestStatus] = useState<"idle" | "checking" | "ok" | "error">("idle");
+  const [selfTestReport, setSelfTestReport] = useState("");
   const [refreshing, setRefreshing] = useState(false);
   const [refreshResult, setRefreshResult] = useState("");
   const [plexSigningIn, setPlexSigningIn] = useState(false);
@@ -360,6 +362,153 @@ export default function SettingsPage() {
     }
   };
 
+  const formatPlaybackSelfTest = (data: {
+    ffmpeg?: { ok?: boolean; path?: string; hint?: string };
+    sample?: {
+      title?: string;
+      strategy?: string;
+      prep?: string;
+      video?: string;
+      audio?: string;
+      format?: string;
+      reasons?: string[];
+      warnings?: string[];
+      error?: string;
+    };
+    directPlaySetting?: boolean;
+    plexOnly?: boolean;
+  }) => {
+    const lines: string[] = [];
+    if (data.ffmpeg?.ok) {
+      lines.push(`ffmpeg: OK (${data.ffmpeg.path ?? "in PATH"})`);
+    } else {
+      lines.push(`ffmpeg: missing — ${data.ffmpeg?.hint ?? "install ffmpeg in the container"}`);
+    }
+    lines.push(
+      `Settings: direct play ${data.directPlaySetting ? "on" : "off"}, Plex-only ${data.plexOnly ? "on" : "off"}`
+    );
+    const sample = data.sample;
+    if (!sample) {
+      lines.push("Sample file: none found in library");
+    } else if (sample.error) {
+      lines.push(`Sample probe: ${sample.error}`);
+    } else {
+      lines.push(
+        `Sample "${sample.title ?? "file"}": ${sample.strategy ?? "?"} — ${sample.prep ?? ""}`
+      );
+      if (sample.video || sample.audio) {
+        lines.push(`  Codecs: ${sample.video ?? "?"} / ${sample.audio ?? "?"} (${sample.format ?? "?"})`);
+      }
+      if (sample.reasons?.length) lines.push(`  ${sample.reasons.join(" · ")}`);
+      if (sample.warnings?.length) lines.push(`  ⚠ ${sample.warnings.join(" · ")}`);
+    }
+    return lines.join("\n");
+  };
+
+  const formatMetadataDiagnostics = (data: {
+    results?: Record<string, { ok?: boolean; message?: string; error?: string }>;
+  }) => {
+    const results = data.results ?? {};
+    return Object.entries(results)
+      .map(([key, row]) => {
+        const label = key.toUpperCase();
+        if (row.ok) return `${label}: ${row.message ?? "OK"}`;
+        return `${label}: ${row.error ?? "failed"}`;
+      })
+      .join("\n");
+  };
+
+  const runPlaybackSelfTest = async () => {
+    setSelfTestStatus("checking");
+    setSelfTestReport("");
+    try {
+      await syncSettingsToServer(form);
+      const res = await fetchWithSettings("/api/settings/diagnostics?action=playback", form);
+      const data = await res.json();
+      const sampleOk = !data.sample?.error;
+      setSelfTestStatus(data.ffmpeg?.ok && sampleOk ? "ok" : "error");
+      setSelfTestReport(formatPlaybackSelfTest(data));
+    } catch {
+      setSelfTestStatus("error");
+      setSelfTestReport("Playback self-test request failed");
+    }
+  };
+
+  const runMetadataDiagnostics = async () => {
+    setSelfTestStatus("checking");
+    setSelfTestReport("");
+    try {
+      await syncSettingsToServer(form);
+      const res = await fetchWithSettings("/api/settings/diagnostics?action=metadata", form);
+      const data = await res.json();
+      setSelfTestStatus(data.ok ? "ok" : "error");
+      setSelfTestReport(formatMetadataDiagnostics(data));
+    } catch {
+      setSelfTestStatus("error");
+      setSelfTestReport("Metadata diagnostics request failed");
+    }
+  };
+
+  const runAllDiagnostics = async () => {
+    setSelfTestStatus("checking");
+    setSelfTestReport("");
+    try {
+      await syncSettingsToServer(form);
+      const [ffmpegRes, playbackRes, metadataRes, libraryRes, videoRes, plexRes] = await Promise.all([
+        fetchWithSettings("/api/settings/diagnostics?action=ffmpeg", form),
+        fetchWithSettings("/api/settings/diagnostics?action=playback", form),
+        fetchWithSettings("/api/settings/diagnostics?action=metadata", form),
+        fetchWithSettings("/api/settings/diagnostics?action=library", form),
+        fetchWithSettings(
+          `/api/settings/diagnostics?action=video&path=${encodeURIComponent(CONTAINER_VIDEO_PATH)}`,
+          form
+        ),
+        form.plexToken
+          ? fetch("/api/settings/diagnostics?action=plex", { credentials: "same-origin" })
+          : Promise.resolve(null),
+      ]);
+
+      const ffmpeg = await ffmpegRes.json();
+      const playback = await playbackRes.json();
+      const metadata = await metadataRes.json();
+      const library = await libraryRes.json();
+      const video = await videoRes.json();
+      const plex = plexRes ? await plexRes.json() : null;
+
+      const lines = [
+        "=== Playback ===",
+        formatPlaybackSelfTest(playback),
+        "",
+        "=== Metadata ===",
+        formatMetadataDiagnostics(metadata),
+        "",
+        "=== Library ===",
+        library.ok ? (library.message ?? "Library path OK") : (library.error ?? formatLibraryDiagnostic(library)),
+        "",
+        "=== Video folder ===",
+        video.ok ? (video.message ?? `${CONTAINER_VIDEO_PATH} readable`) : formatLibraryDiagnostic(video),
+      ];
+
+      if (plex) {
+        lines.push("", "=== Plex ===", plex.ok ? (plex.message ?? "Connected") : (plex.error ?? "Failed"));
+      }
+
+      const allOk =
+        ffmpeg.ok &&
+        playback.ffmpeg?.ok &&
+        !playback.sample?.error &&
+        library.ok &&
+        video.ok &&
+        (plex ? plex.ok : true);
+
+      setSelfTestStatus(allOk ? "ok" : "error");
+      setSelfTestReport(lines.join("\n"));
+    } catch {
+      setSelfTestStatus("error");
+      setSelfTestReport("Full diagnostics run failed");
+    }
+  };
+
   const testPlexDiagnostics = async () => {
     if (!form.plexToken) return;
     setPlexStatus("checking");
@@ -555,6 +704,31 @@ export default function SettingsPage() {
               <RefreshCw className={cn("h-4 w-4", refreshing && "animate-spin")} />
               Full resync (shows + episodes)
             </button>
+            <button
+              type="button"
+              onClick={() => void runPlaybackSelfTest()}
+              className="rounded border border-white/30 px-4 py-2 text-sm hover:bg-white/10"
+            >
+              Playback self-test
+              {selfTestStatus === "checking" && "..."}
+            </button>
+            <button
+              type="button"
+              onClick={() => void runMetadataDiagnostics()}
+              className="rounded border border-white/30 px-4 py-2 text-sm hover:bg-white/10"
+            >
+              Test metadata APIs
+            </button>
+            <button
+              type="button"
+              onClick={() => void runAllDiagnostics()}
+              className="rounded border border-netflix-red/50 bg-netflix-red/10 px-4 py-2 text-sm font-medium hover:bg-netflix-red/20"
+            >
+              Run all diagnostics
+              {selfTestStatus === "checking" && "..."}
+              {selfTestStatus === "ok" && <Check className="ml-1 inline h-4 w-4 text-green-400" />}
+              {selfTestStatus === "error" && <X className="ml-1 inline h-4 w-4 text-red-400" />}
+            </button>
           </div>
           {plexServer && plexStatus === "ok" && (
             <p className="mt-3 text-sm text-green-400">{plexServer}</p>
@@ -589,6 +763,16 @@ export default function SettingsPage() {
           )}
           {refreshResult && (
             <p className="mt-3 text-sm text-netflix-light-gray">{refreshResult}</p>
+          )}
+          {selfTestReport && (
+            <pre
+              className={cn(
+                "mt-4 max-h-64 overflow-auto rounded border border-white/10 bg-black/40 p-4 text-xs leading-relaxed whitespace-pre-wrap",
+                selfTestStatus === "ok" ? "text-green-300" : "text-netflix-light-gray"
+              )}
+            >
+              {selfTestReport}
+            </pre>
           )}
         </section>
 

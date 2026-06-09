@@ -1,6 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
 import { mergeSettingsForServerOps } from "@/lib/settings";
 import { fetchPlexLibrary } from "@/lib/plex";
+import { testTvdbConnection } from "@/lib/tvdb";
+import { getTrending } from "@/lib/tmdb";
+import {
+  analyzePlaybackPreflight,
+  prepEstimateLabel,
+  strategyLabel,
+} from "@/lib/playback-preflight";
+import {
+  getFfmpegInstallHint,
+  getFfmpegPath,
+  isFfmpegAvailable,
+  probeMediaFile,
+  trackResponseDefaults,
+} from "@/lib/ffmpeg";
 import {
   CONTAINER_MEDIA_PATH,
   CONTAINER_VIDEO_PATH,
@@ -90,6 +104,136 @@ export async function GET(request: NextRequest) {
   const libraryPath = pathOverride
     ? mapHostPathToContainer(pathOverride)
     : resolveLibraryPath(settings.libraryPath);
+
+  if (action === "ffmpeg") {
+    const available = await isFfmpegAvailable();
+    return NextResponse.json({
+      ok: available,
+      path: getFfmpegPath(),
+      hint: available ? undefined : getFfmpegInstallHint(),
+    });
+  }
+
+  if (action === "metadata") {
+    const results: Record<string, { ok: boolean; message?: string; error?: string }> = {};
+
+    if (settings.tmdbApiKey) {
+      try {
+        const items = await getTrending(settings.tmdbApiKey);
+        results.tmdb = {
+          ok: items.length > 0,
+          message: items.length ? `TMDB OK — ${items.length} trending titles` : "TMDB returned no results",
+        };
+      } catch (err) {
+        results.tmdb = {
+          ok: false,
+          error: err instanceof Error ? err.message : "TMDB failed",
+        };
+      }
+    } else {
+      results.tmdb = { ok: false, error: "Not configured" };
+    }
+
+    if (settings.tvdbApiKey) {
+      const tvdb = await testTvdbConnection(settings.tvdbApiKey);
+      results.tvdb = tvdb.ok
+        ? { ok: true, message: "TVDB login OK" }
+        : { ok: false, error: tvdb.error ?? "TVDB failed" };
+    } else {
+      results.tvdb = { ok: false, error: "Not configured" };
+    }
+
+    if (settings.realDebridToken) {
+      try {
+        const res = await fetch("https://api.real-debrid.com/rest/1.0/user", {
+          headers: { Authorization: `Bearer ${settings.realDebridToken}` },
+        });
+        if (res.ok) {
+          const user = (await res.json()) as { username?: string; premium?: number };
+          results.debrid = {
+            ok: true,
+            message: `${user.username ?? "RD user"} · ${user.premium ? "Premium" : "Free"}`,
+          };
+        } else {
+          results.debrid = { ok: false, error: `Real-Debrid HTTP ${res.status}` };
+        }
+      } catch (err) {
+        results.debrid = {
+          ok: false,
+          error: err instanceof Error ? err.message : "Real-Debrid unreachable",
+        };
+      }
+    } else {
+      results.debrid = { ok: false, error: "Not configured" };
+    }
+
+    return NextResponse.json({ ok: Object.values(results).some((r) => r.ok), results });
+  }
+
+  if (action === "playback") {
+    const ffmpegAvailable = await isFfmpegAvailable();
+    const samplePath = request.nextUrl.searchParams.get("path") ?? undefined;
+    let sampleFile: string | undefined;
+    let sampleTitle: string | undefined;
+
+    if (samplePath) {
+      const mapped = mapHostPathToContainer(samplePath);
+      sampleFile = mapped;
+      sampleTitle = mapped.split("/").pop();
+    } else if (libraryPath) {
+      try {
+        const items = await scanLibraryAt(libraryPath);
+        const mkv = items.find((i) => i.filePath?.toLowerCase().endsWith(".mkv"));
+        const pick = mkv ?? items[0];
+        if (pick?.filePath) {
+          sampleFile = pick.filePath;
+          sampleTitle = pick.title;
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+
+    let preflightSummary: Record<string, unknown> | undefined;
+    if (sampleFile) {
+      try {
+        const probe = trackResponseDefaults(await probeMediaFile(sampleFile));
+        const preflight = analyzePlaybackPreflight(probe, {
+          ffmpegAvailable,
+          preferDirectPlay: settings.directPlay,
+        });
+        preflightSummary = {
+          title: sampleTitle,
+          path: sampleFile,
+          strategy: strategyLabel(preflight.strategy),
+          prep: prepEstimateLabel(preflight.prepEstimate),
+          video: preflight.videoCodec,
+          audio: preflight.defaultAudioCodec,
+          format: preflight.format,
+          reasons: preflight.reasons,
+          warnings: preflight.warnings,
+        };
+      } catch (err) {
+        preflightSummary = {
+          title: sampleTitle,
+          path: sampleFile,
+          error: err instanceof Error ? err.message : "Probe failed",
+        };
+      }
+    }
+
+    return NextResponse.json({
+      ok: ffmpegAvailable,
+      ffmpeg: {
+        ok: ffmpegAvailable,
+        path: getFfmpegPath(),
+        hint: ffmpegAvailable ? undefined : getFfmpegInstallHint(),
+      },
+      sample: preflightSummary ?? { error: "No video file found to probe in library" },
+      directPlaySetting: settings.directPlay,
+      plexOnly: settings.plexOnly,
+    });
+  }
 
   if (action === "plex") {
     if (!settings.plexUrl || !settings.plexToken) {

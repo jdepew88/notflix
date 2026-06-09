@@ -1,5 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { probeMediaFile, probeMediaUrl, isBrowserAudioCodec, startHlsTranscode } from "@/lib/ffmpeg";
+import {
+  probeMediaFile,
+  probeMediaUrl,
+  startHlsTranscode,
+  trackNeedsTranscode,
+  type StreamTrack,
+} from "@/lib/ffmpeg";
 import { resolveAccessibleLibraryFile, resolveLibraryRoot } from "@/lib/library-playback";
 import { mergeSettingsForServerOps } from "@/lib/settings";
 
@@ -10,7 +16,7 @@ export async function GET(request: NextRequest) {
   const filePath = request.nextUrl.searchParams.get("path");
   const audio = request.nextUrl.searchParams.get("audio");
   const subtitle = request.nextUrl.searchParams.get("subtitle");
-  const subtitleCodec = request.nextUrl.searchParams.get("subtitleCodec") ?? undefined;
+  let subtitleCodec = request.nextUrl.searchParams.get("subtitleCodec") ?? undefined;
 
   if ((!url && !filePath) || audio === null) {
     return NextResponse.json({ error: "Missing source or audio track" }, { status: 400 });
@@ -37,19 +43,28 @@ export async function GET(request: NextRequest) {
   try {
     let transcodeVideo = false;
     let copyAudio = false;
+    let subtitlesForOrdinal: StreamTrack[] = [];
     if (filePath && libraryRoot) {
       const resolved = resolveAccessibleLibraryFile(filePath, libraryRoot);
       if (resolved) {
         const probe = await probeMediaFile(resolved);
+        subtitlesForOrdinal = probe.subtitles;
         transcodeVideo = probe.needsVideoTranscode;
         const selectedAudio = probe.audio.find((a) => a.index === audioIndex);
-        copyAudio = Boolean(selectedAudio && isBrowserAudioCodec(selectedAudio.codec));
+        copyAudio = Boolean(selectedAudio && !trackNeedsTranscode(selectedAudio));
+        if (subtitleIndex !== null && !subtitleCodec) {
+          subtitleCodec = probe.subtitles.find((s) => s.index === subtitleIndex)?.codec;
+        }
       }
     } else if (url) {
       const probe = await probeMediaUrl(url);
+      subtitlesForOrdinal = probe.subtitles;
       transcodeVideo = probe.needsVideoTranscode;
       const selectedAudio = probe.audio.find((a) => a.index === audioIndex);
-      copyAudio = Boolean(selectedAudio && isBrowserAudioCodec(selectedAudio.codec));
+      copyAudio = Boolean(selectedAudio && !trackNeedsTranscode(selectedAudio));
+      if (subtitleIndex !== null && !subtitleCodec) {
+        subtitleCodec = probe.subtitles.find((s) => s.index === subtitleIndex)?.codec;
+      }
     }
 
     const { session } = await startHlsTranscode(
@@ -57,7 +72,7 @@ export async function GET(request: NextRequest) {
       audioIndex,
       subtitleIndex,
       subtitleCodec,
-      [],
+      subtitlesForOrdinal,
       transcodeVideo,
       copyAudio
     );

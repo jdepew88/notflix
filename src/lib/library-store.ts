@@ -31,6 +31,10 @@ export interface LibraryDatabase {
   featuredHeroId: string | null;
   heroPrimaryId?: string | null;
   heroVideoError?: string | null;
+  /** ISO country code used for cached TMDB watch-provider data. */
+  watchProvidersCountry?: string;
+  /** When watch providers were last persisted to this database. */
+  watchProvidersAt?: string;
 }
 
 const DB_VERSION = 2 as const;
@@ -154,6 +158,8 @@ export function databaseAsCache(db: LibraryDatabase) {
     featuredHeroId: db.featuredHeroId,
     heroPrimaryId: db.heroPrimaryId,
     heroVideoError: db.heroVideoError,
+    watchProvidersCountry: db.watchProvidersCountry,
+    watchProvidersAt: db.watchProvidersAt,
   };
 }
 

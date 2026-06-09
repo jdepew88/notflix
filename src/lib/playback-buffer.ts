@@ -69,6 +69,7 @@ export function buildHlsConfig(tier: BufferTier): Partial<HlsConfig> {
   const profile = PROFILES[tier];
   return {
     enableWorker: true,
+    enableWebVTT: true,
     lowLatencyMode: false,
     maxBufferLength: profile.maxBufferLength,
     maxMaxBufferLength: profile.maxMaxBufferLength,

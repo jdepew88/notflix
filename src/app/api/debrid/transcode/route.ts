@@ -1,5 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { startHlsTranscode, probeMediaUrl, probeMediaFile, isBrowserAudioCodec, type StreamTrack } from "@/lib/ffmpeg";
+import {
+  startHlsTranscode,
+  probeMediaUrl,
+  probeMediaFile,
+  trackNeedsTranscode,
+  type StreamTrack,
+} from "@/lib/ffmpeg";
 import { resolveAccessibleLibraryFile, resolveLibraryRoot } from "@/lib/library-playback";
 import { mergeSettingsForServerOps } from "@/lib/settings";
 import { resolveStreamInput } from "@/lib/stream-source";
@@ -44,7 +50,7 @@ export async function GET(request: NextRequest) {
       subtitlesForOrdinal = probe.subtitles;
       transcodeVideo = probe.needsVideoTranscode;
       const selectedAudio = probe.audio.find((a) => a.index === audioIndex);
-      copyAudio = Boolean(selectedAudio && isBrowserAudioCodec(selectedAudio.codec));
+      copyAudio = Boolean(selectedAudio && !trackNeedsTranscode(selectedAudio));
       if (subtitleIndex !== null) {
         subtitleCodec = probe.subtitles.find((s) => s.index === subtitleIndex)?.codec;
       }
@@ -53,7 +59,7 @@ export async function GET(request: NextRequest) {
       subtitlesForOrdinal = probe.subtitles;
       transcodeVideo = probe.needsVideoTranscode;
       const selectedAudio = probe.audio.find((a) => a.index === audioIndex);
-      copyAudio = Boolean(selectedAudio && isBrowserAudioCodec(selectedAudio.codec));
+      copyAudio = Boolean(selectedAudio && !trackNeedsTranscode(selectedAudio));
       if (subtitleIndex !== null) {
         subtitleCodec = probe.subtitles.find((s) => s.index === subtitleIndex)?.codec;
       }

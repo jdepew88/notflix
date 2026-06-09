@@ -29,6 +29,8 @@ export interface LibraryCacheData {
   heroPrimaryId?: string | null;
   /** Set when all hero preview attempts fail. */
   heroVideoError?: string | null;
+  watchProvidersCountry?: string;
+  watchProvidersAt?: string;
 }
 
 const CACHE_VERSION = 1 as const;

@@ -19,6 +19,7 @@ import {
   type LibraryCacheData,
 } from "./library-cache";
 import {
+  databaseAsCache,
   readLibraryDatabase,
   writeLibraryDatabase,
   type LibraryDatabase,
@@ -29,6 +30,7 @@ import {
   resetLibrarySyncState,
 } from "./library-sync-state";
 import { initializeAndResolveHeroVideo } from "./hero-resolve";
+import { attachWatchProvidersToLibrary } from "./library-providers";
 
 interface BuildOptions {
   forceRefresh?: boolean;
@@ -234,7 +236,7 @@ async function buildLibraryCatalogInner(
 
   const heroCandidates = pickHeroCandidates(items, previous?.featuredHeroId);
 
-  const db: LibraryDatabase = {
+  let db: LibraryDatabase = {
     version: 2,
     cachedAt: new Date().toISOString(),
     source,
@@ -248,6 +250,26 @@ async function buildLibraryCatalogInner(
     heroPrimaryId: heroCandidates[0]?.id ?? featured?.id ?? null,
     heroVideoError: null,
   };
+
+  if (settings.tmdbApiKey && items.length > 0) {
+    reportProgress({
+      phase: "enriching",
+      message: "Caching streaming providers (one-time per sync)…",
+      current: 0,
+      total: 1,
+      itemsLoaded: items.length,
+    });
+    const enriched = await attachWatchProvidersToLibrary(databaseAsCache(db), settings.tmdbApiKey, {
+      country: "US",
+    });
+    db = {
+      ...db,
+      items: enriched.items,
+      rows: enriched.rows,
+      watchProvidersCountry: enriched.watchProvidersCountry,
+      watchProvidersAt: enriched.watchProvidersAt,
+    };
+  }
 
   reportProgress({
     phase: "saving",

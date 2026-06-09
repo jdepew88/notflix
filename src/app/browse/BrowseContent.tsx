@@ -88,6 +88,7 @@ export function BrowseContent() {
   const [hero, setHero] = useState<MediaItem | null>(null);
   const [heroVideoError, setHeroVideoError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadingTmdbRows, setLoadingTmdbRows] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [libraryStatus, setLibraryStatus] = useState<string>("");
   const [loadFailed, setLoadFailed] = useState(false);
@@ -102,6 +103,7 @@ export function BrowseContent() {
   allRowsRef.current = allRows;
   const sentinelRef = useRef<HTMLDivElement>(null);
   const loadGenerationRef = useRef(0);
+  const lastLibPayloadRef = useRef<Parameters<typeof buildRowsFromLibrary>[0] | null>(null);
 
   const handleHeroItemChange = useCallback((item: MediaItem, error: string | null) => {
     setHero(item);
@@ -163,38 +165,63 @@ export function BrowseContent() {
     []
   );
 
+  const loadTmdbHomeRowsInBackground = useCallback(
+    async (generation: number, settings: ReturnType<typeof getEffectiveSettings>) => {
+      if (!settings.tmdbApiKey || settings.plexOnly) return;
+
+      setLoadingTmdbRows(true);
+      try {
+        const tmdbRows = await loadTmdbHomeRows(HOME_TMDB_ROWS_INITIAL, settings);
+        if (generation !== loadGenerationRef.current) return;
+
+        const libPayload = lastLibPayloadRef.current;
+        if (libPayload) {
+          buildRowsFromLibrary(libPayload, tmdbRows);
+        } else if (tmdbRows.length > 0) {
+          setAllRows((prev) => {
+            const existingIds = new Set(prev.map((row) => row.id));
+            const merged = [...prev];
+            for (const row of tmdbRows) {
+              if (!existingIds.has(row.id)) merged.push(row);
+            }
+            return merged;
+          });
+        }
+      } catch {
+        /* TMDB rows are optional — library is already visible */
+      } finally {
+        if (generation === loadGenerationRef.current) {
+          setLoadingTmdbRows(false);
+        }
+      }
+    },
+    [buildRowsFromLibrary]
+  );
+
   const loadBrowse = useCallback(
     async (options: { refresh?: boolean } = {}) => {
       const generation = ++loadGenerationRef.current;
       const softRefresh = allRowsRef.current.length > 0;
       if (!softRefresh) setLoading(true);
+      setLoadingTmdbRows(false);
       setLoadFailed(false);
+      lastLibPayloadRef.current = null;
       const settings = getEffectiveSettings(storeSettings);
 
       try {
-        const cookiesPromise =
-          settings.plexUrl && settings.plexToken
-            ? ensurePlexCookies(settings)
-            : Promise.resolve();
+        if (settings.plexUrl && settings.plexToken) {
+          void ensurePlexCookies(settings);
+        }
 
         const libraryUrl = options.refresh ? "/api/library?refresh=1" : "/api/library";
-        const tmdbPromise =
-          settings.tmdbApiKey && !settings.plexOnly
-            ? loadTmdbHomeRows(HOME_TMDB_ROWS_INITIAL, settings)
-            : Promise.resolve([] as ContentRowData[]);
-
-        const [libraryRes, initialTmdbRows] = await Promise.all([
-          fetchWithSettings(libraryUrl, settings),
-          tmdbPromise,
-          cookiesPromise,
-        ]);
+        const libraryRes = await fetchWithSettings(libraryUrl, settings);
 
         if (generation !== loadGenerationRef.current) return;
 
         if (libraryRes.ok) {
           const libData = await libraryRes.json();
-          const tmdbRows = settings.plexOnly ? [] : initialTmdbRows;
-          const count = buildRowsFromLibrary(libData, tmdbRows);
+          lastLibPayloadRef.current = libData;
+          const count = buildRowsFromLibrary(libData, []);
 
           if (libData.syncing && count === 0) {
             setStreamingFilter("all");
@@ -206,10 +233,10 @@ export function BrowseContent() {
           setLibraryStatus(
             err.error || `Library load failed (${libraryRes.status}). Check Settings and try Save & Sync.`
           );
-          if (!settings.plexOnly) {
-            buildRowsFromLibrary({ items: [], rows: [] }, initialTmdbRows);
-          } else {
+          if (settings.plexOnly) {
             setAllRows([]);
+          } else {
+            buildRowsFromLibrary({ items: [], rows: [] }, []);
           }
         }
 
@@ -227,8 +254,12 @@ export function BrowseContent() {
           setLoading(false);
         }
       }
+
+      if (generation === loadGenerationRef.current) {
+        void loadTmdbHomeRowsInBackground(generation, settings);
+      }
     },
-    [storeSettings, buildRowsFromLibrary]
+    [storeSettings, buildRowsFromLibrary, loadTmdbHomeRowsInBackground]
   );
 
   useEffect(() => {
@@ -480,6 +511,13 @@ export function BrowseContent() {
               featured={row.featured || row.id === "plex-movies" || row.id === "plex-shows"}
             />
           ))
+        )}
+
+        {loadingTmdbRows && streamingFilter === "all" && !filterEmpty && (
+          <div className="flex items-center justify-center gap-3 py-8">
+            <div className="h-8 w-8 animate-spin rounded-full border-4 border-white/30 border-t-white" />
+            <p className="text-sm text-netflix-light-gray">Loading trending &amp; popular rows…</p>
+          </div>
         )}
 
         {allRows.length === 0 && (

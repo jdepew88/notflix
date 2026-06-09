@@ -43,12 +43,12 @@ async function probeFromResolved(
         return NextResponse.json({ error: "Access denied" }, { status: 403 });
       }
       const probe = await probeMediaFile(filePath);
-      return NextResponse.json(trackResponseDefaults(probe));
+      return NextResponse.json({ ...trackResponseDefaults(probe), ffmpegAvailable: true });
     }
 
     if (resolved.url) {
       const probe = await probeMediaUrl(resolved.url);
-      return NextResponse.json(trackResponseDefaults(probe));
+      return NextResponse.json({ ...trackResponseDefaults(probe), ffmpegAvailable: true });
     }
 
     return NextResponse.json({ error: "Missing url, session, or path" }, { status: 400 });

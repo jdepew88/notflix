@@ -4,51 +4,33 @@ import fsPromises from "fs/promises";
 import path from "path";
 import crypto from "crypto";
 import { ffmpegThreadArgs, getFfmpegPreset, getFfmpegTuneArgs } from "./ffmpeg-config";
+import type { ProbeResult, StreamTrack } from "@/types/media-tracks";
+import {
+  containerPrefersTranscode,
+  defaultAudioTrack,
+  defaultSubtitleTrack,
+  isBrowserVideoCodec,
+  isHlsVideoCopySafe,
+  isTextSubtitleCodec,
+  subtitleStreamOrdinal,
+  trackNeedsTranscode,
+  trackResponseDefaults,
+} from "./media-codec";
 
-export interface StreamTrack {
-  index: number;
-  type: "audio" | "subtitle";
-  codec: string;
-  language?: string;
-  title?: string;
-  default?: boolean;
-  forced?: boolean;
-  channels?: number;
-  label: string;
-}
-
-export interface ProbeResult {
-  format: string;
-  duration?: number;
-  videoCodec?: string;
-  audio: StreamTrack[];
-  subtitles: StreamTrack[];
-  needsVideoTranscode: boolean;
-  needsTranscode: boolean;
-}
+export type { ProbeResult, StreamTrack } from "@/types/media-tracks";
+export {
+  containerPrefersTranscode,
+  defaultAudioTrack,
+  defaultSubtitleTrack,
+  isBrowserVideoCodec,
+  isHlsVideoCopySafe,
+  isTextSubtitleCodec,
+  subtitleStreamOrdinal,
+  trackNeedsTranscode,
+  trackResponseDefaults,
+} from "./media-codec";
 
 const CACHE_DIR = path.join(/* turbopackIgnore: true */ process.cwd(), ".cache", "debrid");
-
-const BROWSER_AUDIO = new Set(["aac", "mp3", "opus", "flac", "vorbis"]);
-const TRANSCODE_AUDIO = new Set(["ac3", "eac3", "dts", "truehd", "dts_hd_ma", "dts-hd", "pcm_s16le"]);
-const BROWSER_VIDEO = new Set(["h264", "hevc", "h265", "vp8", "vp9", "av1"]);
-
-export function isBrowserVideoCodec(codec: string): boolean {
-  const c = codec.toLowerCase();
-  if (BROWSER_VIDEO.has(c)) return true;
-  if (c.startsWith("h264") || c.includes("avc")) return true;
-  return false;
-}
-
-export function isBrowserAudioCodec(codec: string): boolean {
-  const c = codec.toLowerCase();
-  return BROWSER_AUDIO.has(c) && !TRANSCODE_AUDIO.has(c);
-}
-
-export function trackNeedsTranscode(track: StreamTrack | undefined): boolean {
-  if (!track) return true;
-  return !isBrowserAudioCodec(track.codec);
-}
 
 let resolvedBinaries: { ffmpeg: string; ffprobe: string } | null = null;
 
@@ -232,8 +214,14 @@ function parseProbeOutput(output: string): ProbeResult {
 
   const formatName = data.format?.format_name || "unknown";
   const needsVideoTranscode = videoCodec
-    ? !isBrowserVideoCodec(videoCodec)
+    ? !isHlsVideoCopySafe(videoCodec)
     : /avi|xvid|asf|wmv|mpeg/i.test(formatName);
+
+  const needsTranscode =
+    needsAudioTranscode ||
+    needsVideoTranscode ||
+    audio.length === 0 ||
+    (needsAudioTranscode && containerPrefersTranscode(formatName));
 
   return {
     format: formatName,
@@ -242,7 +230,7 @@ function parseProbeOutput(output: string): ProbeResult {
     audio,
     subtitles,
     needsVideoTranscode,
-    needsTranscode: needsAudioTranscode || needsVideoTranscode || audio.length === 0,
+    needsTranscode,
   };
 }
 
@@ -260,90 +248,6 @@ export async function probeMediaUrl(url: string): Promise<ProbeResult> {
     url,
   ]);
   return parseProbeOutput(output);
-}
-
-const TEXT_SUBTITLE_CODECS = new Set([
-  "subrip",
-  "srt",
-  "ass",
-  "ssa",
-  "mov_text",
-  "webvtt",
-  "text",
-]);
-
-export function isTextSubtitleCodec(codec: string): boolean {
-  const c = codec.toLowerCase();
-  return TEXT_SUBTITLE_CODECS.has(c) || c.includes("subrip");
-}
-
-export function isEnglishLanguage(value?: string): boolean {
-  if (!value) return false;
-  const normalized = value.toLowerCase().trim();
-  if (["en", "eng", "english"].includes(normalized)) return true;
-  const primary = normalized.split(/[-_]/)[0];
-  return primary === "en" || primary === "eng";
-}
-
-function trackMatchesEnglish(track: StreamTrack): boolean {
-  return isEnglishLanguage(track.language) || isEnglishLanguage(track.title);
-}
-
-export function defaultSubtitleTrack(subtitles: StreamTrack[]): number | null {
-  if (subtitles.length === 0) return null;
-
-  const english = subtitles.filter(trackMatchesEnglish);
-  if (english.length > 0) {
-    return (
-      english.find((t) => t.default && !t.forced)?.index ??
-      english.find((t) => !t.forced)?.index ??
-      english[0].index
-    );
-  }
-
-  const def = subtitles.find((t) => t.default);
-  if (def) return def.index;
-  return subtitles[0].index;
-}
-
-export function subtitleStreamOrdinal(
-  subtitles: StreamTrack[],
-  absoluteIndex: number
-): number {
-  const idx = subtitles.findIndex((s) => s.index === absoluteIndex);
-  return idx >= 0 ? idx : 0;
-}
-
-export function trackResponseDefaults(probe: ProbeResult) {
-  const defaultSubtitleIndex = defaultSubtitleTrack(probe.subtitles);
-  return {
-    ...probe,
-    defaultAudioIndex: defaultAudioTrack(probe.audio),
-    defaultSubtitleIndex,
-    needsSubtitles: defaultSubtitleIndex !== null,
-  };
-}
-
-export function defaultAudioTrack(audio: StreamTrack[]): number {
-  const englishAac = audio.find(
-    (a) => a.codec.toLowerCase() === "aac" && trackMatchesEnglish(a)
-  );
-  if (englishAac) return englishAac.index;
-
-  const englishTracks = audio.filter(trackMatchesEnglish);
-  if (englishTracks.length > 0) {
-    const browserOk = englishTracks.find((a) => BROWSER_AUDIO.has(a.codec.toLowerCase()));
-    if (browserOk) return browserOk.index;
-    const def = englishTracks.find((a) => a.default);
-    if (def) return def.index;
-    return englishTracks[0].index;
-  }
-
-  const aac = audio.find((a) => a.codec.toLowerCase() === "aac");
-  if (aac) return aac.index;
-  const def = audio.find((a) => a.default);
-  if (def) return def.index;
-  return audio[0]?.index ?? 0;
 }
 
 export function sessionId(
@@ -471,7 +375,14 @@ export async function startHlsTranscode(
         ];
 
         if (subtitleStreamIndex !== null && subtitleStreamIndex >= 0 && !burnInImageSub) {
-          args.push("-map", `0:${subtitleStreamIndex}`, "-c:s", "webvtt");
+          args.push(
+            "-map",
+            `0:${subtitleStreamIndex}`,
+            "-c:s",
+            "webvtt",
+            "-metadata:s:s:0",
+            "language=eng"
+          );
         }
 
         args.push(
@@ -482,7 +393,9 @@ export async function startHlsTranscode(
           "-hls_list_size",
           "0",
           "-hls_flags",
-          "independent_segments",
+          "independent_segments+program_date_time",
+          "-hls_segment_type",
+          "mpegts",
           "-hls_segment_filename",
           path.join(outDir, "seg_%03d.ts"),
           manifestPath

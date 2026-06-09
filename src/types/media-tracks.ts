@@ -16,7 +16,7 @@ export interface ProbeResult {
   videoCodec?: string;
   audio: StreamTrack[];
   subtitles: StreamTrack[];
-  needsVideoTranscode?: boolean;
+  needsVideoTranscode: boolean;
   needsTranscode: boolean;
   defaultAudioIndex?: number;
   defaultSubtitleIndex?: number | null;
