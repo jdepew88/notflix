@@ -13,6 +13,8 @@ interface StreamPickerProps {
   openingIndex?: number | null;
   error?: string;
   hint?: string;
+  /** Play (default) or download torrent list */
+  variant?: "play" | "download";
 }
 
 export function StreamPicker({
@@ -24,7 +26,9 @@ export function StreamPicker({
   openingIndex = null,
   error,
   hint,
+  variant = "play",
 }: StreamPickerProps) {
+  const isDownload = variant === "download";
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-black">
       <div className="flex items-center gap-4 border-b border-white/10 px-4 py-4 md:px-8">
@@ -39,7 +43,10 @@ export function StreamPicker({
         <div className="min-w-0 flex-1">
           <h1 className="truncate text-lg font-semibold md:text-xl">{title}</h1>
           <p className="text-sm text-netflix-light-gray">
-            {subtitle ?? "Choose a torrent source from Real-Debrid"}
+            {subtitle ??
+              (isDownload
+                ? "Choose a torrent to download via Real-Debrid"
+                : "Choose a torrent source from Real-Debrid")}
           </p>
         </div>
       </div>
@@ -72,6 +79,8 @@ export function StreamPicker({
                 <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white/10 group-hover:bg-netflix-red">
                   {opening ? (
                     <div className="h-5 w-5 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+                  ) : isDownload ? (
+                    <HardDriveDownload className="h-4 w-4" />
                   ) : (
                     <Play className="h-4 w-4 fill-current" />
                   )}

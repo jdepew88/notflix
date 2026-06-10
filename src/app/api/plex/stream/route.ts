@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getPlexCredentials } from "@/lib/plex-stream";
 import { castCorsHeaders } from "@/lib/cast-cors";
+import { attachmentContentDisposition, sanitizeDownloadFilename } from "@/lib/download-filename";
 
 export async function OPTIONS() {
   return new NextResponse(null, { status: 204, headers: castCorsHeaders() });
@@ -18,6 +19,10 @@ export async function GET(request: NextRequest) {
 
   const upstreamUrl = `${baseUrl}${partKey}?X-Plex-Token=${token}`;
   const range = request.headers.get("range");
+  const download = request.nextUrl.searchParams.get("download") === "1";
+  const downloadName = sanitizeDownloadFilename(
+    request.nextUrl.searchParams.get("filename") || guessFilename(partKey)
+  );
 
   try {
     const headers: HeadersInit = {
@@ -36,6 +41,9 @@ export async function GET(request: NextRequest) {
     const contentRange = upstream.headers.get("Content-Range");
     if (contentLength) responseHeaders.set("Content-Length", contentLength);
     if (contentRange) responseHeaders.set("Content-Range", contentRange);
+    if (download) {
+      responseHeaders.set("Content-Disposition", attachmentContentDisposition(downloadName));
+    }
     for (const [key, value] of Object.entries(castCorsHeaders())) {
       responseHeaders.set(key, value);
     }
@@ -48,6 +56,11 @@ export async function GET(request: NextRequest) {
     const message = err instanceof Error ? err.message : "Plex stream failed";
     return NextResponse.json({ error: message }, { status: 500 });
   }
+}
+
+function guessFilename(partKey: string): string {
+  const segment = partKey.split("/").pop() || "video.mkv";
+  return segment.includes(".") ? segment : `${segment}.mkv`;
 }
 
 function guessMime(partKey: string): string {

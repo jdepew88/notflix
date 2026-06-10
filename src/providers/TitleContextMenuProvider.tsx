@@ -22,9 +22,11 @@ import {
   Copy,
   ExternalLink,
   Trash2,
+  Download,
 } from "lucide-react";
 import { useDetailModal } from "@/providers/DetailModalProvider";
 import { MetadataMatchDialog } from "@/components/browse/MetadataMatchDialog";
+import { StreamPicker } from "@/components/player/StreamPicker";
 import {
   useAppStore,
   isInMyList,
@@ -32,6 +34,8 @@ import {
   getMediaProgress,
 } from "@/lib/store";
 import { canPlayItem, playLabelForItem, watchHref } from "@/lib/playback";
+import { canDownloadItem, downloadTitleTorrent, startTitleDownload } from "@/lib/download-title";
+import type { TorrentioStreamOption } from "@/lib/torrentio";
 import { dispatchLibraryItemUpdated } from "@/lib/item-update-events";
 import {
   isLibraryManagedItem,
@@ -75,6 +79,13 @@ export function TitleContextMenuProvider({ children }: { children: ReactNode }) 
 
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [matchItem, setMatchItem] = useState<MediaItem | null>(null);
+  const [downloadPicker, setDownloadPicker] = useState<{
+    item: MediaItem;
+    streams: TorrentioStreamOption[];
+    message?: string;
+  } | null>(null);
+  const [openingDownloadIndex, setOpeningDownloadIndex] = useState<number | null>(null);
+  const [downloadPickerError, setDownloadPickerError] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -134,6 +145,7 @@ export function TitleContextMenuProvider({ children }: { children: ReactNode }) 
   const inList = menuItem ? isInMyList(menuItem.id) : false;
   const inQueue = menuItem ? isInQueue(menuItem.id) : false;
   const playable = menuItem ? canPlayItem(menuItem) : false;
+  const downloadable = menuItem ? canDownloadItem(menuItem) : false;
   const progress = menuItem ? getMediaProgress(menuItem.id) : 0;
 
   const items: Array<{
@@ -154,6 +166,32 @@ export function TitleContextMenuProvider({ children }: { children: ReactNode }) 
         onClick: () => {
           closeMenu();
           router.push(watchHref(menuItem));
+        },
+      });
+    }
+
+    if (downloadable) {
+      items.push({
+        id: "download",
+        label: "Download video",
+        icon: <Download className="h-4 w-4" />,
+        disabled: busy,
+        onClick: () => {
+          closeMenu();
+          setBusy(true);
+          setDownloadPickerError(null);
+          void startTitleDownload(menuItem)
+            .then((picker) => {
+              if (picker) {
+                setDownloadPicker(picker);
+                return;
+              }
+              setStatus("Download started");
+            })
+            .catch((err) => {
+              setStatus(err instanceof Error ? err.message : "Download failed");
+            })
+            .finally(() => setBusy(false));
         },
       });
     }
@@ -309,6 +347,37 @@ export function TitleContextMenuProvider({ children }: { children: ReactNode }) 
 
       {matchItem && (
         <MetadataMatchDialog item={matchItem} onClose={() => setMatchItem(null)} />
+      )}
+
+      {downloadPicker && (
+        <StreamPicker
+          variant="download"
+          title={`Download ${downloadPicker.item.title}`}
+          streams={downloadPicker.streams}
+          hint={downloadPicker.message}
+          error={downloadPickerError ?? undefined}
+          openingIndex={openingDownloadIndex}
+          onCancel={() => {
+            setDownloadPicker(null);
+            setDownloadPickerError(null);
+            setOpeningDownloadIndex(null);
+          }}
+          onSelect={(index) => {
+            setOpeningDownloadIndex(index);
+            setDownloadPickerError(null);
+            void downloadTitleTorrent(downloadPicker.item, index)
+              .then(() => {
+                setStatus("Download started");
+                setDownloadPicker(null);
+              })
+              .catch((err) => {
+                setDownloadPickerError(
+                  err instanceof Error ? err.message : "Download failed"
+                );
+              })
+              .finally(() => setOpeningDownloadIndex(null));
+          }}
+        />
       )}
 
       {status && (

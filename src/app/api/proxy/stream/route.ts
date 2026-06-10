@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { castCorsHeaders } from "@/lib/cast-cors";
 import { resolveStreamSession } from "@/lib/stream-sessions";
+import { attachmentContentDisposition, sanitizeDownloadFilename } from "@/lib/download-filename";
 
 export async function OPTIONS() {
   return new NextResponse(null, { status: 204, headers: castCorsHeaders() });
@@ -34,6 +35,10 @@ export async function GET(request: NextRequest) {
     }
 
     const range = request.headers.get("range");
+    const download = request.nextUrl.searchParams.get("download") === "1";
+    const downloadName = sanitizeDownloadFilename(
+      request.nextUrl.searchParams.get("filename") || "video.mkv"
+    );
     const headers: HeadersInit = {
       "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
     };
@@ -47,6 +52,9 @@ export async function GET(request: NextRequest) {
     const contentRange = upstream.headers.get("Content-Range");
     if (contentLength) responseHeaders.set("Content-Length", contentLength);
     if (contentRange) responseHeaders.set("Content-Range", contentRange);
+    if (download) {
+      responseHeaders.set("Content-Disposition", attachmentContentDisposition(downloadName));
+    }
     for (const [key, value] of Object.entries(castCorsHeaders())) {
       responseHeaders.set(key, value);
     }

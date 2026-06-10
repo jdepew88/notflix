@@ -5,6 +5,7 @@ import { mergeSettingsForServerOps } from "@/lib/settings";
 import { resolveLibraryPath } from "@/lib/library-path";
 import { mappedLibraryFilePath } from "@/lib/library-playback";
 import { getMimeType } from "@/lib/library";
+import { attachmentContentDisposition, sanitizeDownloadFilename } from "@/lib/download-filename";
 
 export async function GET(request: NextRequest) {
   const filePath = request.nextUrl.searchParams.get("path");
@@ -30,6 +31,14 @@ export async function GET(request: NextRequest) {
     const fileSize = stat.size;
     const range = request.headers.get("range");
     const contentType = getMimeType(resolved);
+    const download = request.nextUrl.searchParams.get("download") === "1";
+    const downloadName = sanitizeDownloadFilename(
+      request.nextUrl.searchParams.get("filename") || path.basename(resolved)
+    );
+    const extraHeaders: Record<string, string> = {};
+    if (download) {
+      extraHeaders["Content-Disposition"] = attachmentContentDisposition(downloadName);
+    }
 
     if (range) {
       const parts = range.replace(/bytes=/, "").split("-");
@@ -56,6 +65,7 @@ export async function GET(request: NextRequest) {
           "Accept-Ranges": "bytes",
           "Content-Length": String(chunkSize),
           "Content-Type": contentType,
+          ...extraHeaders,
         },
       });
     }
@@ -74,6 +84,7 @@ export async function GET(request: NextRequest) {
         "Content-Length": String(fileSize),
         "Content-Type": contentType,
         "Accept-Ranges": "bytes",
+        ...extraHeaders,
       },
     });
   } catch {
