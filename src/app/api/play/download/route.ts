@@ -36,6 +36,7 @@ function buildPlayRequest(request: NextRequest) {
       forceDebrid: params.get("forceDebrid") === "1" || parsed.forceDebrid,
       plexUrl: settings.plexUrl,
       plexToken: settings.plexToken,
+      libraryPath: settings.libraryPath,
       torrentioUrl: settings.torrentioUrl || getTorrentioUrl() || undefined,
       peerflixUrl: settings.peerflixUrl || getPeerflixUrl() || undefined,
       realDebridToken: settings.realDebridToken || getRealDebridToken() || undefined,

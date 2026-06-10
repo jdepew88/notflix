@@ -2,7 +2,12 @@ import { fetchPlexLibrary } from "./plex";
 import { findInPlexLibrary, isEpisodePlaybackMatch } from "./plex-match";
 import { plexDirectStreamUrl } from "./plex-stream";
 import { readLibraryDatabase } from "./library-store";
-import { itemWithMappedPath, libraryStreamUrl } from "./library-playback";
+import {
+  itemWithMappedPath,
+  libraryStreamUrl,
+  resolveAccessibleLibraryFile,
+} from "./library-playback";
+import { resolveLibraryPath } from "./library-path";
 import { resolvePeerflixBaseUrl } from "./peerflix";
 import {
   buildDefaultTorrentioUrl,
@@ -42,6 +47,7 @@ export interface PlayResolveRequest {
   peerflixUrl?: string;
   realDebridToken?: string;
   tmdbApiKey?: string;
+  libraryPath?: string;
   plexOnly?: boolean;
   /** Skip Plex/library and search torrent addons only. */
   debridOnly?: boolean;
@@ -213,16 +219,36 @@ function peerflixBaseUrl(request: PlayResolveRequest): string {
   });
 }
 
-function libraryMatchResult(match: MediaItem, message: string): PlayResolveResult {
-  const item = itemWithMappedPath(match);
-  const streamUrl = item.filePath ? libraryStreamUrl(item.filePath) : item.streamUrl;
+function libraryStreamForItem(
+  item: MediaItem,
+  libraryRoot: string
+): { streamUrl?: string; source: "library" | "plex" } {
+  if (item.filePath && resolveAccessibleLibraryFile(item.filePath, libraryRoot)) {
+    return {
+      streamUrl: libraryStreamUrl(item.filePath, libraryRoot),
+      source: "library",
+    };
+  }
+  if (item.plexPartKey && item.streamUrl) {
+    return { streamUrl: item.streamUrl, source: "plex" };
+  }
+  return { streamUrl: item.streamUrl, source: item.filePath ? "library" : "plex" };
+}
+
+function libraryMatchResult(
+  match: MediaItem,
+  message: string,
+  libraryRoot: string
+): PlayResolveResult {
+  const item = itemWithMappedPath(match, libraryRoot);
+  const playback = libraryStreamForItem(item, libraryRoot);
 
   return {
-    source: item.filePath ? "library" : "plex",
+    source: playback.source,
     item,
     watchId: item.id,
-    streamUrl,
-    streamLabel: item.filePath ? "Local library" : "Plex",
+    streamUrl: playback.streamUrl,
+    streamLabel: playback.source === "library" ? "Local library" : "Plex",
     message,
   };
 }
@@ -230,6 +256,7 @@ function libraryMatchResult(match: MediaItem, message: string): PlayResolveResul
 function tryLibraryDbMatch(request: PlayResolveRequest): PlayResolveResult | null {
   const db = readLibraryDatabase();
   if (!db?.items.length) return null;
+  const libraryRoot = resolveLibraryPath(request.libraryPath);
 
   if (request.type === "series" && request.season != null && request.episode != null) {
     const episode = findLibraryEpisode(db.items, {
@@ -242,7 +269,8 @@ function tryLibraryDbMatch(request: PlayResolveRequest): PlayResolveResult | nul
     if (episode && isEpisodePlaybackMatch(episode, request)) {
       return libraryMatchResult(
         episode,
-        "Playing episode from saved library (local file or Plex metadata)"
+        "Playing episode from saved library (local file or Plex metadata)",
+        libraryRoot
       );
     }
     return null;
@@ -259,7 +287,11 @@ function tryLibraryDbMatch(request: PlayResolveRequest): PlayResolveResult | nul
   });
   if (!match || !isEpisodePlaybackMatch(match, request)) return null;
 
-  return libraryMatchResult(match, "Playing from saved library (local file or Plex metadata)");
+  return libraryMatchResult(
+    match,
+    "Playing from saved library (local file or Plex metadata)",
+    libraryRoot
+  );
 }
 
 async function tryPlexMatch(request: PlayResolveRequest): Promise<PlayResolveResult | null> {
@@ -279,22 +311,28 @@ async function tryPlexMatch(request: PlayResolveRequest): Promise<PlayResolveRes
     });
     if (!match || !isEpisodePlaybackMatch(match, request)) return null;
 
-    const item = itemWithMappedPath(match);
-    const streamUrl =
-      item.filePath
-        ? libraryStreamUrl(item.filePath)
-        : match.streamUrl ??
-          (match.plexPartKey ? plexDirectStreamUrl(match.plexPartKey, plexUrl) : undefined);
+    const libraryRoot = resolveLibraryPath(request.libraryPath);
+    const item = itemWithMappedPath(match, libraryRoot);
+    const playback = libraryStreamForItem(
+      {
+        ...item,
+        streamUrl:
+          match.streamUrl ??
+          (match.plexPartKey ? plexDirectStreamUrl(match.plexPartKey, plexUrl) : undefined),
+      },
+      libraryRoot
+    );
 
     return {
-      source: item.filePath ? "library" : "plex",
+      source: playback.source,
       item,
       watchId: match.id,
-      streamUrl,
-      streamLabel: item.filePath ? "Local library" : "Plex",
-      message: item.filePath
-        ? "Playing from local library folder"
-        : "Playing from your Plex library",
+      streamUrl: playback.streamUrl,
+      streamLabel: playback.source === "library" ? "Local library" : "Plex",
+      message:
+        playback.source === "library"
+          ? "Playing from local library folder"
+          : "Playing from your Plex library",
     };
   } catch (err) {
     console.warn("[play-resolve] Plex library check failed:", err);

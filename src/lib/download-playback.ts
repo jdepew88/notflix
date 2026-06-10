@@ -2,7 +2,12 @@ import { getPlexItem } from "./plex";
 import { resolvePlexPlayRatingKey } from "./plex-play-key";
 import { plexDirectStreamUrl } from "./plex-stream";
 import { readLibraryDatabase } from "./library-store";
-import { itemWithMappedPath, libraryStreamUrl } from "./library-playback";
+import {
+  itemWithMappedPath,
+  libraryStreamUrl,
+  resolveAccessibleLibraryFile,
+} from "./library-playback";
+import { resolveLibraryPath } from "./library-path";
 import {
   buildDownloadUrl,
   downloadFilenameForItem,
@@ -81,13 +86,21 @@ function canSearchDebrid(request: PlayResolveRequest): boolean {
   );
 }
 
+function libraryRootForRequest(request: PlayResolveRequest): string {
+  return resolveLibraryPath(request.libraryPath);
+}
+
 async function buildLocalDownloadUrl(
   item: MediaItem,
   request: PlayResolveRequest
 ): Promise<string | null> {
+  const libraryRoot = libraryRootForRequest(request);
+
   if (item.filePath) {
-    const mapped = itemWithMappedPath(item);
-    return libraryStreamUrl(mapped.filePath!);
+    const accessible = resolveAccessibleLibraryFile(item.filePath, libraryRoot);
+    if (accessible) {
+      return libraryStreamUrl(item.filePath, libraryRoot);
+    }
   }
 
   if (item.plexPartKey && request.plexUrl) {
@@ -176,7 +189,7 @@ async function tryLocalDownload(
   libraryItem?: MediaItem
 ): Promise<DirectDownloadResult | null> {
   if (libraryItem?.filePath) {
-    const item = itemWithMappedPath(libraryItem);
+    const item = itemWithMappedPath(libraryItem, libraryRootForRequest(request));
     const streamUrl = await buildLocalDownloadUrl(item, request);
     if (streamUrl) {
       return directDownloadFromItem(item, streamUrl, "library", request, "Local library");

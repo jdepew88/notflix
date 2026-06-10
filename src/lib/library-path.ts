@@ -10,8 +10,29 @@ export const CONTAINER_MEDIA_PATH = "/media";
 /** Default library folder inside the container. */
 export const CONTAINER_VIDEO_PATH = "/media/Video";
 
+/** Plex container paths that differ from the Notflix library mount. */
+const PLEX_LIBRARY_ROOT_ALIASES = [
+  "/data/Video",
+  "/data/video",
+  "/data/Media/Video",
+  "/data/media/Video",
+  "/data/Media",
+  "/data/media",
+];
+
+function remapPlexLibraryAlias(input: string, libraryRoot: string): string | null {
+  const normalized = input.replace(/\\/g, "/");
+  for (const prefix of PLEX_LIBRARY_ROOT_ALIASES) {
+    if (normalized === prefix || normalized.startsWith(`${prefix}/`)) {
+      const suffix = normalized.slice(prefix.length);
+      return `${libraryRoot.replace(/\/$/, "")}${suffix}`;
+    }
+  }
+  return null;
+}
+
 /** Map unRAID host paths to in-container paths. */
-export function mapHostPathToContainer(input: string): string {
+export function mapHostPathToContainer(input: string, libraryRoot?: string): string {
   const trimmed = input.trim();
   if (!trimmed) return trimmed;
 
@@ -20,6 +41,12 @@ export function mapHostPathToContainer(input: string): string {
   }
   if (trimmed.startsWith(`${HOST_MEDIA_PATH}/`)) {
     return `${CONTAINER_MEDIA_PATH}${trimmed.slice(HOST_MEDIA_PATH.length)}`;
+  }
+
+  const targetRoot = libraryRoot?.trim() || resolveLibraryPath();
+  if (targetRoot) {
+    const remapped = remapPlexLibraryAlias(trimmed, targetRoot);
+    if (remapped) return remapped;
   }
 
   return trimmed;

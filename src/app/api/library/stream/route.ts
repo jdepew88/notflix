@@ -3,7 +3,7 @@ import { createReadStream, statSync } from "fs";
 import path from "path";
 import { mergeSettingsForServerOps } from "@/lib/settings";
 import { resolveLibraryPath } from "@/lib/library-path";
-import { mappedLibraryFilePath } from "@/lib/library-playback";
+import { resolveAccessibleLibraryFile } from "@/lib/library-playback";
 import { getMimeType } from "@/lib/library";
 import { attachmentContentDisposition, sanitizeDownloadFilename } from "@/lib/download-filename";
 
@@ -19,11 +19,15 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  const resolved = path.resolve(mappedLibraryFilePath(filePath));
-  const root = path.resolve(libraryPath);
-
-  if (!resolved.startsWith(root)) {
-    return NextResponse.json({ error: "Access denied" }, { status: 403 });
+  const resolved = resolveAccessibleLibraryFile(filePath, libraryPath);
+  if (!resolved) {
+    return NextResponse.json(
+      {
+        error: "Access denied",
+        hint: "Library file path is outside LIBRARY_PATH. Plex may use /data/Video while the container mounts /media/Video — check Settings → Video library folder.",
+      },
+      { status: 403 }
+    );
   }
 
   try {

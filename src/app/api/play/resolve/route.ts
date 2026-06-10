@@ -20,6 +20,7 @@ export async function GET(request: NextRequest) {
     ...parsed,
     plexUrl: settings.plexUrl,
     plexToken: settings.plexToken,
+    libraryPath: settings.libraryPath,
     torrentioUrl: settings.torrentioUrl || getTorrentioUrl() || undefined,
     peerflixUrl: settings.peerflixUrl || getPeerflixUrl() || undefined,
     realDebridToken: settings.realDebridToken || getRealDebridToken() || undefined,
