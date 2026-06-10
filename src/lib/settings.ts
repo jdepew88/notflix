@@ -10,7 +10,7 @@ import {
   saveServerSettings,
   type ServerSettings,
 } from "./server-settings";
-import { mapHostPathToContainer } from "./library-path";
+import { resolveLibraryPath } from "./library-path";
 import { withResolvedPlex } from "./plex-connection";
 
 export type { ServerSettings as ResolvedSettings };
@@ -67,7 +67,7 @@ export function mergeSettingsFromBody(
   const normalized = {
     ...body,
     libraryPath: body.libraryPath
-      ? mapHostPathToContainer(body.libraryPath)
+      ? resolveLibraryPath(body.libraryPath)
       : body.libraryPath,
   };
   return mergeAllSettings(current, normalized);

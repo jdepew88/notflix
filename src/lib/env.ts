@@ -1,6 +1,6 @@
 /** Server-side environment helpers with production defaults. */
 
-import { mapHostPathToContainer } from "./library-path";
+import { resolveLibraryPath } from "./library-path";
 import { finalizeStremioAddonUrl } from "./stremio-streams";
 
 export function getPort(): number {
@@ -10,9 +10,7 @@ export function getPort(): number {
 }
 
 export function getLibraryPath(): string {
-  const fromEnv = process.env.LIBRARY_PATH?.trim();
-  if (fromEnv) return mapHostPathToContainer(fromEnv);
-  return process.env.NODE_ENV === "production" ? "/media/Video" : "";
+  return resolveLibraryPath(process.env.LIBRARY_PATH);
 }
 
 export function getPlexUrl(): string {
