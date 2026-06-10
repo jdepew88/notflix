@@ -90,6 +90,10 @@ function libraryRootForRequest(request: PlayResolveRequest): string {
   return resolveLibraryPath(request.libraryPath);
 }
 
+function downloadSourceForStreamUrl(streamUrl: string): "library" | "plex" {
+  return streamUrl.includes("/api/plex/stream") ? "plex" : "library";
+}
+
 async function buildLocalDownloadUrl(
   item: MediaItem,
   request: PlayResolveRequest
@@ -192,7 +196,14 @@ async function tryLocalDownload(
     const item = itemWithMappedPath(libraryItem, libraryRootForRequest(request));
     const streamUrl = await buildLocalDownloadUrl(item, request);
     if (streamUrl) {
-      return directDownloadFromItem(item, streamUrl, "library", request, "Local library");
+      const source = downloadSourceForStreamUrl(streamUrl);
+      return directDownloadFromItem(
+        item,
+        streamUrl,
+        source,
+        request,
+        source === "library" ? "Local library" : "Plex"
+      );
     }
   }
 

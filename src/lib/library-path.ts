@@ -31,8 +31,8 @@ function remapPlexLibraryAlias(input: string, libraryRoot: string): string | nul
   return null;
 }
 
-/** Map unRAID host paths to in-container paths. */
-export function mapHostPathToContainer(input: string, libraryRoot?: string): string {
+/** Map unRAID host share paths only (no Plex aliases, no resolveLibraryPath). */
+function mapHostShareToContainer(input: string): string {
   const trimmed = input.trim();
   if (!trimmed) return trimmed;
 
@@ -43,7 +43,25 @@ export function mapHostPathToContainer(input: string, libraryRoot?: string): str
     return `${CONTAINER_MEDIA_PATH}${trimmed.slice(HOST_MEDIA_PATH.length)}`;
   }
 
-  const targetRoot = libraryRoot?.trim() || resolveLibraryPath();
+  return trimmed;
+}
+
+function defaultContainerLibraryRoot(): string {
+  const fromEnv = process.env.LIBRARY_PATH?.trim();
+  if (fromEnv) return mapHostShareToContainer(fromEnv);
+  if (process.env.NODE_ENV === "production") return CONTAINER_VIDEO_PATH;
+  return "";
+}
+
+/** Map unRAID host paths to in-container paths. */
+export function mapHostPathToContainer(input: string, libraryRoot?: string): string {
+  const trimmed = input.trim();
+  if (!trimmed) return trimmed;
+
+  const hostMapped = mapHostShareToContainer(trimmed);
+  if (hostMapped !== trimmed) return hostMapped;
+
+  const targetRoot = libraryRoot?.trim() || defaultContainerLibraryRoot();
   if (targetRoot) {
     const remapped = remapPlexLibraryAlias(trimmed, targetRoot);
     if (remapped) return remapped;
@@ -59,9 +77,13 @@ export function isHostMediaPath(input: string): boolean {
 
 export function resolveLibraryPath(settingsPath?: string): string {
   const trimmed = settingsPath?.trim();
-  if (trimmed) return mapHostPathToContainer(trimmed);
+  if (trimmed) {
+    return mapHostPathToContainer(trimmed, mapHostShareToContainer(trimmed));
+  }
   const fromEnv = process.env.LIBRARY_PATH?.trim();
-  if (fromEnv) return mapHostPathToContainer(fromEnv);
+  if (fromEnv) {
+    return mapHostPathToContainer(fromEnv, mapHostShareToContainer(fromEnv));
+  }
   if (process.env.NODE_ENV === "production") return CONTAINER_VIDEO_PATH;
   return "";
 }
