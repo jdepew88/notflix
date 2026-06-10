@@ -33,6 +33,7 @@ export function DownloadDialog({ item, onClose }: DownloadDialogProps) {
   const [openingIndex, setOpeningIndex] = useState<number | null>(null);
   const [loadingTorrents, setLoadingTorrents] = useState(false);
   const [canSearchDebrid, setCanSearchDebrid] = useState(false);
+  const [downloading, setDownloading] = useState(false);
 
   const applyResult = useCallback((result: DownloadResolveResult) => {
     if (result.mode === "direct") {
@@ -51,26 +52,7 @@ export function DownloadDialog({ item, onClose }: DownloadDialogProps) {
     setPhase("torrents");
   }, []);
 
-  useEffect(() => {
-    let cancelled = false;
-
-    void resolveTitleDownload(item, settings)
-      .then((result) => {
-        if (cancelled) return;
-        applyResult(result);
-      })
-      .catch((err) => {
-        if (cancelled) return;
-        setError(err instanceof Error ? err.message : "Download failed");
-        setPhase("error");
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [item, settings, applyResult]);
-
-  const openTorrentPicker = async () => {
+  const openTorrentPicker = useCallback(async () => {
     setLoadingTorrents(true);
     setError(null);
     try {
@@ -79,15 +61,49 @@ export function DownloadDialog({ item, onClose }: DownloadDialogProps) {
       setHint(listed.message);
       setHeadline("Real-Debrid torrents");
       setDescription(
-        "Pick a torrent to download. Notflix unlocks it through Real-Debrid and sends the file to your browser."
+        "Choose a torrent to download. Notflix unlocks it through Real-Debrid, then your browser downloads the file over HTTPS."
       );
       setPhase("torrents");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Torrent search failed");
+      setPhase("error");
     } finally {
       setLoadingTorrents(false);
     }
-  };
+  }, [item, settings]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    void resolveTitleDownload(item, settings)
+      .then((result) => {
+        if (cancelled) return;
+        applyResult(result);
+      })
+      .catch(async (err) => {
+        if (cancelled) return;
+        const message = err instanceof Error ? err.message : "Download failed";
+        try {
+          const listed = await loadTorrentDownloadOptions(item, settings);
+          if (cancelled) return;
+          setStreams(listed.streams);
+          setHeadline("Not in your Plex library");
+          setDescription(
+            "Choose a torrent below. Notflix unlocks it through Real-Debrid, then your browser downloads the file over HTTPS."
+          );
+          setHint(listed.message ?? message);
+          setPhase("torrents");
+        } catch {
+          if (cancelled) return;
+          setError(message);
+          setPhase("error");
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [item, settings, applyResult]);
 
   if (phase === "torrents") {
     return (
@@ -142,7 +158,10 @@ export function DownloadDialog({ item, onClose }: DownloadDialogProps) {
             <div className="flex flex-col items-center gap-3 py-8 text-center">
               <Loader2 className="h-8 w-8 animate-spin text-netflix-red" />
               <p className="text-sm text-netflix-light-gray">
-                Checking Plex library and download options…
+                Checking Plex library…
+              </p>
+              <p className="text-xs text-netflix-gray">
+                If this title is not in Plex, Real-Debrid torrents will load next.
               </p>
             </div>
           )}
@@ -150,6 +169,14 @@ export function DownloadDialog({ item, onClose }: DownloadDialogProps) {
           {phase === "error" && (
             <div className="space-y-4">
               <div className="rounded bg-red-900/40 px-4 py-3 text-sm text-red-200">{error}</div>
+              <button
+                type="button"
+                onClick={() => void openTorrentPicker()}
+                disabled={loadingTorrents}
+                className="w-full rounded bg-white px-4 py-2.5 text-sm font-semibold text-black hover:bg-white/90 disabled:opacity-50"
+              >
+                {loadingTorrents ? "Searching Real-Debrid…" : "Search Real-Debrid torrents"}
+              </button>
               <button
                 type="button"
                 onClick={() => {
@@ -164,7 +191,7 @@ export function DownloadDialog({ item, onClose }: DownloadDialogProps) {
                 }}
                 className="w-full rounded bg-white/10 px-4 py-2 text-sm hover:bg-white/15"
               >
-                Try again
+                Try Plex again
               </button>
             </div>
           )}
@@ -193,11 +220,20 @@ export function DownloadDialog({ item, onClose }: DownloadDialogProps) {
 
                 <button
                   type="button"
-                  onClick={() => startDirectDownload(direct)}
-                  className="flex w-full items-center justify-center gap-2 rounded bg-white px-4 py-2.5 text-sm font-semibold text-black transition hover:bg-white/90"
+                  disabled={downloading}
+                  onClick={() => {
+                    setDownloading(true);
+                    void startDirectDownload(direct, settings)
+                      .catch((err) => {
+                        setError(err instanceof Error ? err.message : "Download failed");
+                        setPhase("error");
+                      })
+                      .finally(() => setDownloading(false));
+                  }}
+                  className="flex w-full items-center justify-center gap-2 rounded bg-white px-4 py-2.5 text-sm font-semibold text-black transition hover:bg-white/90 disabled:opacity-50"
                 >
                   <Download className="h-4 w-4" />
-                  Download file
+                  {downloading ? "Starting download…" : "Download file"}
                 </button>
               </div>
 
@@ -210,7 +246,7 @@ export function DownloadDialog({ item, onClose }: DownloadDialogProps) {
                 >
                   {loadingTorrents
                     ? "Searching Real-Debrid torrents…"
-                    : "Not the right file? Search Real-Debrid torrents instead"}
+                    : "Not in Plex? Search Real-Debrid torrents instead"}
                 </button>
               )}
             </div>

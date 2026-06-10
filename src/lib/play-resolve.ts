@@ -47,6 +47,8 @@ export interface PlayResolveRequest {
   debridOnly?: boolean;
   /** Skip Plex/library lookup (download torrents only). */
   forceDebrid?: boolean;
+  /** Return the Real-Debrid HTTPS link instead of the app proxy (for downloads). */
+  forDownload?: boolean;
   /** Rank torrents for browser direct play (H.264 + AAC / MP4). */
   directPlayPreferred?: boolean;
 }
@@ -483,8 +485,18 @@ export async function openTorrentioStreamByIndex(
     season: enriched.season,
     episode: enriched.episode,
   });
-  const { session, proxyPath } = registerStreamUrlIfLong(directUrl);
   const option = listed.options[streamIndex];
+  const useDirectHttps = Boolean(enriched.forDownload);
+
+  if (useDirectHttps) {
+    return {
+      item,
+      streamUrl: directUrl,
+      streamLabel: option?.label || stream.title || stream.name || "Torrent",
+    };
+  }
+
+  const { session, proxyPath } = registerStreamUrlIfLong(directUrl);
 
   return {
     item,

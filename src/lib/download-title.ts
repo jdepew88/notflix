@@ -1,6 +1,10 @@
 import { canPlayItem } from "./playback";
 import { isSeriesItem } from "./watch-url";
-import { fetchWithSettings, getEffectiveSettings } from "./client-settings";
+import {
+  ensurePlexCookies,
+  fetchWithSettings,
+  getEffectiveSettings,
+} from "./client-settings";
 import type { AppSettings, MediaItem } from "./types";
 import type { DirectDownloadResult, DownloadResolveResult } from "./download-playback";
 import type { TorrentioStreamOption } from "./torrentio";
@@ -38,14 +42,13 @@ function downloadQueryForItem(
   return params.toString();
 }
 
-export function triggerBrowserDownload(downloadUrl: string, filename: string): void {
-  const anchor = document.createElement("a");
-  anchor.href = downloadUrl;
-  anchor.download = filename;
-  anchor.rel = "noopener";
-  document.body.appendChild(anchor);
-  anchor.click();
-  anchor.remove();
+/** Navigate to a download URL so Content-Disposition / HTTPS links work reliably. */
+export function triggerBrowserDownload(downloadUrl: string, _filename: string): void {
+  if (/^https?:\/\//i.test(downloadUrl)) {
+    window.open(downloadUrl, "_blank", "noopener,noreferrer");
+    return;
+  }
+  window.location.assign(downloadUrl);
 }
 
 async function fetchDownloadApi(
@@ -53,9 +56,12 @@ async function fetchDownloadApi(
   settings: Partial<AppSettings>,
   options: { streamIndex?: number; forceDebrid?: boolean } = {}
 ): Promise<DownloadResolveResult> {
+  const effective = getEffectiveSettings(settings);
+  await ensurePlexCookies(effective);
+
   const res = await fetchWithSettings(
     `/api/play/download?${downloadQueryForItem(item, options)}`,
-    settings
+    effective
   );
   const data = (await res.json()) as DownloadResolveResult & { error?: string };
 
@@ -87,7 +93,12 @@ export async function loadTorrentDownloadOptions(
   return { streams: result.streams, message: result.message };
 }
 
-export function startDirectDownload(result: DirectDownloadResult): void {
+export async function startDirectDownload(
+  result: DirectDownloadResult,
+  settings?: Partial<AppSettings>
+): Promise<void> {
+  const effective = getEffectiveSettings(settings);
+  await ensurePlexCookies(effective);
   triggerBrowserDownload(result.downloadUrl, result.filename);
 }
 
@@ -100,6 +111,6 @@ export async function downloadTitleTorrent(
   if (result.mode !== "direct") {
     throw new Error("Could not start torrent download");
   }
-  startDirectDownload(result);
+  await startDirectDownload(result, settings);
   return result;
 }

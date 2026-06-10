@@ -48,3 +48,35 @@ export function withDownloadQuery(url: string, filename: string): string {
   const sep = url.includes("?") ? "&" : "?";
   return `${url}${sep}download=1&filename=${encodeURIComponent(sanitizeDownloadFilename(filename))}`;
 }
+
+/** Build a browser-navigable download URL (same-origin proxy or external HTTPS). */
+export function buildDownloadUrl(
+  streamUrl: string,
+  filename: string,
+  options: { plexToken?: string } = {}
+): string {
+  const safeName = sanitizeDownloadFilename(filename);
+
+  if (/^https?:\/\//i.test(streamUrl)) {
+    return streamUrl;
+  }
+
+  const params = new URLSearchParams();
+  const queryStart = streamUrl.indexOf("?");
+  const path = queryStart >= 0 ? streamUrl.slice(0, queryStart) : streamUrl;
+  const existing = queryStart >= 0 ? streamUrl.slice(queryStart + 1) : "";
+  if (existing) {
+    for (const part of existing.split("&")) {
+      const [key, ...rest] = part.split("=");
+      if (key) params.set(key, decodeURIComponent(rest.join("=")));
+    }
+  }
+
+  params.set("download", "1");
+  params.set("filename", safeName);
+  if (options.plexToken && path.includes("/api/plex/stream")) {
+    params.set("token", options.plexToken);
+  }
+
+  return `${path}?${params.toString()}`;
+}

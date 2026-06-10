@@ -4,9 +4,9 @@ import { plexDirectStreamUrl } from "./plex-stream";
 import { readLibraryDatabase } from "./library-store";
 import { itemWithMappedPath, libraryStreamUrl } from "./library-playback";
 import {
+  buildDownloadUrl,
   downloadFilenameForItem,
   sanitizeDownloadFilename,
-  withDownloadQuery,
 } from "./download-filename";
 import {
   enrichPlayResolveRequest,
@@ -70,15 +70,14 @@ function mergeDownloadRequest(
           ? "movie"
           : request.type,
     directPlayPreferred: false,
+    forDownload: true,
   };
 }
 
 function canSearchDebrid(request: PlayResolveRequest): boolean {
   if (request.plexOnly) return false;
   return Boolean(
-    request.realDebridToken ||
-      request.torrentioUrl ||
-      request.peerflixUrl
+    request.realDebridToken || request.torrentioUrl || request.peerflixUrl
   );
 }
 
@@ -130,7 +129,9 @@ function directDownloadFromItem(
 
   return {
     mode: "direct",
-    downloadUrl: withDownloadQuery(streamUrl, filename),
+    downloadUrl: buildDownloadUrl(streamUrl, filename, {
+      plexToken: source === "plex" ? request.plexToken : undefined,
+    }),
     filename,
     source,
     label: sourceLabel,
@@ -142,10 +143,10 @@ function directDownloadFromItem(
           : "Download from Real-Debrid",
     description:
       source === "library"
-        ? "Stream the original file from your mounted video folder."
+        ? "Download the original file from your mounted video folder."
         : source === "plex"
-          ? "Download the original file from your Plex server — no transcoding."
-          : "Download the cached stream from Real-Debrid.",
+          ? "Download the original file from your Plex server over HTTPS."
+          : "Download the unlocked file from Real-Debrid over HTTPS.",
     canSearchDebrid: canSearchDebrid(request),
   };
 }
@@ -166,8 +167,38 @@ async function resolveTorrentPick(
     message: sources.message,
     headline: "Not in your Plex library",
     description:
-      "Pick a torrent below. Notflix will unlock it through Real-Debrid and start the download.",
+      "Choose a torrent below. Notflix unlocks it through Real-Debrid, then your browser downloads the file over HTTPS.",
   };
+}
+
+async function tryLocalDownload(
+  request: PlayResolveRequest,
+  libraryItem?: MediaItem
+): Promise<DirectDownloadResult | null> {
+  if (libraryItem?.filePath) {
+    const item = itemWithMappedPath(libraryItem);
+    const streamUrl = await buildLocalDownloadUrl(item, request);
+    if (streamUrl) {
+      return directDownloadFromItem(item, streamUrl, "library", request, "Local library");
+    }
+  }
+
+  const sources = await listPlaybackSources(request);
+
+  if (sources.source === "library" || sources.source === "plex") {
+    if (!sources.item) return null;
+    const streamUrl = await buildLocalDownloadUrl(sources.item, request);
+    if (!streamUrl) return null;
+    return directDownloadFromItem(
+      sources.item,
+      streamUrl,
+      sources.source,
+      request,
+      sources.source === "library" ? "Local library" : "Plex"
+    );
+  }
+
+  return null;
 }
 
 export async function resolveDownloadPlayback(
@@ -203,45 +234,18 @@ export async function resolveDownloadPlayback(
     return resolveTorrentPick(merged, libraryItem);
   }
 
-  if (libraryItem?.filePath) {
-    const item = itemWithMappedPath(libraryItem);
-    const streamUrl = await buildLocalDownloadUrl(item, merged);
-    if (!streamUrl) {
-      throw new Error("No local file stream available for this title.");
-    }
-    return directDownloadFromItem(item, streamUrl, "library", merged, "Local library");
+  const local = await tryLocalDownload(merged, libraryItem);
+  if (local) {
+    return local;
+  }
+
+  if (canSearchDebrid(merged)) {
+    return resolveTorrentPick(merged, libraryItem);
   }
 
   const sources = await listPlaybackSources(merged);
-
-  if (sources.source === "library" || sources.source === "plex") {
-    if (!sources.item) {
-      throw new Error("Matched title but no item metadata was returned.");
-    }
-    const streamUrl = await buildLocalDownloadUrl(sources.item, merged);
-    if (!streamUrl) {
-      throw new Error("No direct file stream available for this Plex/library title.");
-    }
-    return directDownloadFromItem(
-      sources.item,
-      streamUrl,
-      sources.source,
-      merged,
-      sources.source === "library" ? "Local library" : "Plex"
-    );
-  }
-
-  if (sources.source === "torrentio" && sources.streams?.length) {
-    return {
-      mode: "pick",
-      streams: sources.streams,
-      item: sources.item,
-      message: sources.message,
-      headline: "Not in your Plex library",
-      description:
-        "Pick a torrent below. Notflix will unlock it through Real-Debrid and start the download.",
-    };
-  }
-
-  throw new Error(sources.message || "No downloadable source found for this title.");
+  throw new Error(
+    sources.message ||
+      "Title is not in Plex and Real-Debrid is not configured. Add your Debrid token in Settings."
+  );
 }
