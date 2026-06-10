@@ -1,8 +1,9 @@
 import { canPlayItem } from "./playback";
 import { isSeriesItem } from "./watch-url";
+import { fetchWithSettings, getEffectiveSettings } from "./client-settings";
+import type { AppSettings, MediaItem } from "./types";
+import type { DirectDownloadResult, DownloadResolveResult } from "./download-playback";
 import type { TorrentioStreamOption } from "./torrentio";
-import type { MediaItem } from "./types";
-import type { DownloadResolveResult } from "./download-playback";
 
 export function canDownloadItem(item: MediaItem): boolean {
   if (item.filePath) return true;
@@ -12,7 +13,10 @@ export function canDownloadItem(item: MediaItem): boolean {
   return canPlayItem(item);
 }
 
-function downloadQueryForItem(item: MediaItem, streamIndex?: number): string {
+function downloadQueryForItem(
+  item: MediaItem,
+  options: { streamIndex?: number; forceDebrid?: boolean } = {}
+): string {
   const params = new URLSearchParams();
   params.set("itemId", item.id);
 
@@ -28,7 +32,8 @@ function downloadQueryForItem(item: MediaItem, streamIndex?: number): string {
 
   const year = item.releaseDate?.slice(0, 4);
   if (year) params.set("year", year);
-  if (streamIndex != null) params.set("streamIndex", String(streamIndex));
+  if (options.streamIndex != null) params.set("streamIndex", String(options.streamIndex));
+  if (options.forceDebrid) params.set("forceDebrid", "1");
 
   return params.toString();
 }
@@ -43,10 +48,15 @@ export function triggerBrowserDownload(downloadUrl: string, filename: string): v
   anchor.remove();
 }
 
-export async function resolveTitleDownload(item: MediaItem): Promise<DownloadResolveResult> {
-  const res = await fetch(`/api/play/download?${downloadQueryForItem(item)}`, {
-    credentials: "same-origin",
-  });
+async function fetchDownloadApi(
+  item: MediaItem,
+  settings: Partial<AppSettings>,
+  options: { streamIndex?: number; forceDebrid?: boolean } = {}
+): Promise<DownloadResolveResult> {
+  const res = await fetchWithSettings(
+    `/api/play/download?${downloadQueryForItem(item, options)}`,
+    settings
+  );
   const data = (await res.json()) as DownloadResolveResult & { error?: string };
 
   if (!res.ok) {
@@ -56,44 +66,40 @@ export async function resolveTitleDownload(item: MediaItem): Promise<DownloadRes
   return data;
 }
 
-export async function downloadTitleTorrent(item: MediaItem, streamIndex: number): Promise<void> {
-  const res = await fetch(
-    `/api/play/download?${downloadQueryForItem(item, streamIndex)}`,
-    { credentials: "same-origin" }
-  );
-  const data = (await res.json()) as {
-    error?: string;
-    mode?: string;
-    downloadUrl?: string;
-    filename?: string;
-  };
-
-  if (!res.ok || data.mode !== "direct" || !data.downloadUrl) {
-    throw new Error(data.error || "Could not start torrent download");
-  }
-
-  triggerBrowserDownload(data.downloadUrl, data.filename || "video.mkv");
+export async function resolveTitleDownload(
+  item: MediaItem,
+  settings?: Partial<AppSettings>,
+  options: { forceDebrid?: boolean } = {}
+): Promise<DownloadResolveResult> {
+  return fetchDownloadApi(item, getEffectiveSettings(settings), options);
 }
 
-export type TorrentDownloadPickerState = {
-  item: MediaItem;
-  streams: TorrentioStreamOption[];
-  message?: string;
-};
-
-export async function startTitleDownload(
-  item: MediaItem
-): Promise<TorrentDownloadPickerState | null> {
-  const result = await resolveTitleDownload(item);
-
-  if (result.mode === "direct") {
-    triggerBrowserDownload(result.downloadUrl, result.filename);
-    return null;
+export async function loadTorrentDownloadOptions(
+  item: MediaItem,
+  settings?: Partial<AppSettings>
+): Promise<{ streams: TorrentioStreamOption[]; message?: string }> {
+  const result = await fetchDownloadApi(item, getEffectiveSettings(settings), {
+    forceDebrid: true,
+  });
+  if (result.mode !== "pick") {
+    throw new Error("No torrent sources returned");
   }
+  return { streams: result.streams, message: result.message };
+}
 
-  return {
-    item,
-    streams: result.streams,
-    message: result.message,
-  };
+export function startDirectDownload(result: DirectDownloadResult): void {
+  triggerBrowserDownload(result.downloadUrl, result.filename);
+}
+
+export async function downloadTitleTorrent(
+  item: MediaItem,
+  streamIndex: number,
+  settings?: Partial<AppSettings>
+): Promise<DirectDownloadResult> {
+  const result = await fetchDownloadApi(item, getEffectiveSettings(settings), { streamIndex });
+  if (result.mode !== "direct") {
+    throw new Error("Could not start torrent download");
+  }
+  startDirectDownload(result);
+  return result;
 }

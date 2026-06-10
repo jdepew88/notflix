@@ -1,4 +1,5 @@
 import { getPlexItem } from "./plex";
+import { resolvePlexPlayRatingKey } from "./plex-play-key";
 import { plexDirectStreamUrl } from "./plex-stream";
 import { readLibraryDatabase } from "./library-store";
 import { itemWithMappedPath, libraryStreamUrl } from "./library-playback";
@@ -10,6 +11,7 @@ import {
 import {
   enrichPlayResolveRequest,
   listPlaybackSources,
+  listTorrentDownloadSources,
   openTorrentioStreamByIndex,
   type PlayResolveRequest,
 } from "./play-resolve";
@@ -22,6 +24,9 @@ export interface DirectDownloadResult {
   filename: string;
   source: "library" | "plex" | "torrentio";
   label?: string;
+  headline: string;
+  description: string;
+  canSearchDebrid: boolean;
 }
 
 export interface TorrentPickDownloadResult {
@@ -29,6 +34,8 @@ export interface TorrentPickDownloadResult {
   streams: TorrentioStreamOption[];
   item?: MediaItem;
   message?: string;
+  headline: string;
+  description: string;
 }
 
 export type DownloadResolveResult = DirectDownloadResult | TorrentPickDownloadResult;
@@ -66,6 +73,15 @@ function mergeDownloadRequest(
   };
 }
 
+function canSearchDebrid(request: PlayResolveRequest): boolean {
+  if (request.plexOnly) return false;
+  return Boolean(
+    request.realDebridToken ||
+      request.torrentioUrl ||
+      request.peerflixUrl
+  );
+}
+
 async function buildLocalDownloadUrl(
   item: MediaItem,
   request: PlayResolveRequest
@@ -85,7 +101,14 @@ async function buildLocalDownloadUrl(
 
   const ratingKey = item.plexRatingKey ?? item.id.replace(/^plex-/, "");
   if (ratingKey && request.plexUrl && request.plexToken) {
-    const plexItem = await getPlexItem(request.plexUrl, request.plexToken, ratingKey);
+    const playKey = await resolvePlexPlayRatingKey(
+      request.plexUrl.replace(/\/$/, ""),
+      request.plexToken,
+      ratingKey,
+      request.season,
+      request.episode
+    );
+    const plexItem = await getPlexItem(request.plexUrl, request.plexToken, playKey);
     if (plexItem?.plexPartKey && request.plexUrl) {
       return plexDirectStreamUrl(plexItem.plexPartKey, request.plexUrl);
     }
@@ -98,15 +121,52 @@ function directDownloadFromItem(
   item: MediaItem,
   streamUrl: string,
   source: "library" | "plex" | "torrentio",
+  request: PlayResolveRequest,
   label?: string
 ): DirectDownloadResult {
   const filename = sanitizeDownloadFilename(downloadFilenameForItem(item));
+  const sourceLabel =
+    label ?? (source === "library" ? "Local library" : source === "plex" ? "Plex" : "Real-Debrid");
+
   return {
     mode: "direct",
     downloadUrl: withDownloadQuery(streamUrl, filename),
     filename,
     source,
-    label,
+    label: sourceLabel,
+    headline:
+      source === "library"
+        ? "Download from your library"
+        : source === "plex"
+          ? "Download from Plex"
+          : "Download from Real-Debrid",
+    description:
+      source === "library"
+        ? "Stream the original file from your mounted video folder."
+        : source === "plex"
+          ? "Download the original file from your Plex server — no transcoding."
+          : "Download the cached stream from Real-Debrid.",
+    canSearchDebrid: canSearchDebrid(request),
+  };
+}
+
+async function resolveTorrentPick(
+  request: PlayResolveRequest,
+  libraryItem?: MediaItem
+): Promise<TorrentPickDownloadResult> {
+  const sources = await listTorrentDownloadSources(request);
+  if (sources.source !== "torrentio" || !sources.streams?.length) {
+    throw new Error(sources.message || "No English torrents found on Real-Debrid.");
+  }
+
+  return {
+    mode: "pick",
+    streams: sources.streams,
+    item: sources.item ?? libraryItem,
+    message: sources.message,
+    headline: "Not in your Plex library",
+    description:
+      "Pick a torrent below. Notflix will unlock it through Real-Debrid and start the download.",
   };
 }
 
@@ -136,7 +196,11 @@ export async function resolveDownloadPlayback(
         episode: merged.episode,
       } satisfies MediaItem);
 
-    return directDownloadFromItem(item, opened.streamUrl, "torrentio", opened.streamLabel);
+    return directDownloadFromItem(item, opened.streamUrl, "torrentio", merged, opened.streamLabel);
+  }
+
+  if (merged.forceDebrid) {
+    return resolveTorrentPick(merged, libraryItem);
   }
 
   if (libraryItem?.filePath) {
@@ -145,7 +209,7 @@ export async function resolveDownloadPlayback(
     if (!streamUrl) {
       throw new Error("No local file stream available for this title.");
     }
-    return directDownloadFromItem(item, streamUrl, "library", "Local library");
+    return directDownloadFromItem(item, streamUrl, "library", merged, "Local library");
   }
 
   const sources = await listPlaybackSources(merged);
@@ -162,6 +226,7 @@ export async function resolveDownloadPlayback(
       sources.item,
       streamUrl,
       sources.source,
+      merged,
       sources.source === "library" ? "Local library" : "Plex"
     );
   }
@@ -171,7 +236,10 @@ export async function resolveDownloadPlayback(
       mode: "pick",
       streams: sources.streams,
       item: sources.item,
-      message: sources.message ?? "Choose a torrent to download via Real-Debrid",
+      message: sources.message,
+      headline: "Not in your Plex library",
+      description:
+        "Pick a torrent below. Notflix will unlock it through Real-Debrid and start the download.",
     };
   }
 

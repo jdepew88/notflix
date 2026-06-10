@@ -33,6 +33,7 @@ function buildPlayRequest(request: NextRequest) {
     streamIndex,
     request: {
       ...parsed,
+      forceDebrid: params.get("forceDebrid") === "1" || parsed.forceDebrid,
       plexUrl: settings.plexUrl,
       plexToken: settings.plexToken,
       torrentioUrl: settings.torrentioUrl || getTorrentioUrl() || undefined,

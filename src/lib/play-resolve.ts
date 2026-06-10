@@ -45,6 +45,8 @@ export interface PlayResolveRequest {
   plexOnly?: boolean;
   /** Skip Plex/library and search torrent addons only. */
   debridOnly?: boolean;
+  /** Skip Plex/library lookup (download torrents only). */
+  forceDebrid?: boolean;
   /** Rank torrents for browser direct play (H.264 + AAC / MP4). */
   directPlayPreferred?: boolean;
 }
@@ -549,5 +551,17 @@ export function parsePlayResolveParams(params: URLSearchParams): PlayResolveRequ
     title: params.get("title") ?? undefined,
     year: params.get("year") ? parseInt(params.get("year")!, 10) : undefined,
     seriesId: params.get("seriesId") ?? undefined,
+    forceDebrid: params.get("forceDebrid") === "1",
   };
+}
+
+/** Torrent list for download when Plex/library is unavailable (or forced). */
+export async function listTorrentDownloadSources(
+  request: PlayResolveRequest
+): Promise<ListPlaybackSourcesResult> {
+  return listDebridPlaybackSources({
+    ...request,
+    directPlayPreferred: false,
+    debridOnly: true,
+  });
 }
